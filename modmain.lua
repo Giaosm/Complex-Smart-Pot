@@ -147,10 +147,19 @@ local function CreateRecipePanel(hud, container, is_brewer)
         panel._on_dish_click = function(recipe_name)
             panel._pending_recipe_name = recipe_name
             if recipe_name then
-                panel:SetAutoCookEnabled(true)
-                memory_data._active_recipe = recipe_name
-                SaveMemoryData()
-                panel._auto_cook:SwitchToRecipe(recipe_name)
+                local cooker_ok = panel._cooker_recipes and panel._cooker_recipes[recipe_name]
+                panel:SetAutoCookEnabled(cooker_ok)
+                if cooker_ok then
+                    memory_data._active_recipe = recipe_name
+                    SaveMemoryData()
+                    panel._auto_cook:SwitchToRecipe(recipe_name)
+                else
+                    panel._auto_cook._memory = nil
+                    if panel._pot_bar then
+                        panel._pot_bar:UpdateSlots(nil)
+                        panel._pot_bar:SetSlotLabel("0/5")
+                    end
+                end
             else
                 panel:SetAutoCookEnabled(false)
                 panel._auto_cook._memory = nil
