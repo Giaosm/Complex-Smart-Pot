@@ -12,6 +12,7 @@ local TaskQueue = Class(function(self)
     self._task_func_stop = nil
     self._func_control = {}
     self._stop_control_func = nil
+    self._stop_requested = false
     self._orig_on_control = nil
     self._wrapper_on_control = nil
 
@@ -110,13 +111,15 @@ function TaskQueue:RegNowTask(func_loop, func_stop, controls)
     self._running = true
 
     self._stop_control_func = function()
+        self._stop_requested = true
         self:StopCurrent()
         return true
     end
     self:RegFuncControls(self._stop_control_func, controls)
+    self._stop_requested = false
 
     self._thread_push = StartThread(function()
-        while self._thread_push do
+        while self._thread_push and not self._stop_requested do
             if func_loop() then
                 break
             end
