@@ -95,6 +95,7 @@ function TaskQueue:RegFuncControls(func, controls)
     else
         addkeyboard()
         addmouse()
+        ret[CONTROL_CANCEL] = true  -- 允许 ESC 中止
     end
 
     if type(func) == "function" then
