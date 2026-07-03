@@ -102,6 +102,7 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
     self._active_popup_data = nil
     self._backpack_dirty = false
     self._scroll_to_prefab = nil
+    self._cached_extra_ingredients = nil
 
     if self._enable_auto_cook then
         self._auto_cook = GetAutoCook()(self, range_init)
@@ -556,6 +557,7 @@ end
 function RecipePanel:SetCooker(cooker_prefab, is_brewer)
     self._cooker = cooker_prefab
     self._is_brewer = is_brewer == true
+    self._cached_extra_ingredients = nil
 
     if self._is_brewer then
         self._max_slots = 3
@@ -575,15 +577,13 @@ function RecipePanel:SetCooker(cooker_prefab, is_brewer)
         self._brewer_recipes = nil
         if cooker_prefab ~= nil then
             self._cooker_recipes = cooking.recipes[cooker_prefab] or {}
-            if next(self._cooker_recipes) == nil and cooker_prefab == "alchmy_fur" then
-                if TUNING and TUNING.MYTH_PILL_RECIPES then
+            if cooker_prefab == "alchmy_fur" then
+                if next(self._cooker_recipes) == nil and TUNING and TUNING.MYTH_PILL_RECIPES then
                     self._cooker_recipes = TUNING.MYTH_PILL_RECIPES
                 end
                 if self.data and self.data._CollectMythRecipes then
                     self.data:_CollectMythRecipes()
                 end
-            end
-            if cooker_prefab == "alchmy_fur" and self._cooker_recipes then
                 self._myth_ingredients = {}
                 for _, recipe_def in pairs(self._cooker_recipes) do
                     if recipe_def.recipe then
@@ -627,22 +627,24 @@ function RecipePanel:_RefreshBackpackRecipes()
 
     local max_per_type = self._max_slots - pot_count
 
-    local extra = {}
-    for alias, _ in pairs(self.data._ingredient_aliases) do
-        extra[alias] = true
-    end
-    if self._brewing_ingredients then
-        for k, _ in pairs(self._brewing_ingredients) do
-            extra[k] = true
+    if not self._cached_extra_ingredients then
+        self._cached_extra_ingredients = {}
+        for alias, _ in pairs(self.data._ingredient_aliases) do
+            self._cached_extra_ingredients[alias] = true
         end
-    end
-    if self._myth_ingredients then
-        for k, _ in pairs(self._myth_ingredients) do
-            extra[k] = true
+        if self._brewing_ingredients then
+            for k, _ in pairs(self._brewing_ingredients) do
+                self._cached_extra_ingredients[k] = true
+            end
+        end
+        if self._myth_ingredients then
+            for k, _ in pairs(self._myth_ingredients) do
+                self._cached_extra_ingredients[k] = true
+            end
         end
     end
 
-    local bag_counts = Scanner.CountIngredients(inv:GetItems(), max_per_type, extra)
+    local bag_counts = Scanner.CountIngredients(inv:GetItems(), max_per_type, self._cached_extra_ingredients)
 
     if self._backpack_check_mode == "backpack_and_inv" or self._backpack_check_mode == "all" then
         local open_containers = inv:GetOpenContainers() or {}
@@ -652,7 +654,7 @@ function RecipePanel:_RefreshBackpackRecipes()
                 if container then
                     local is_backpack = container_inst:HasTag("INLIMBO")
                     if is_backpack or self._backpack_check_mode == "all" then
-                        Scanner.CountIngredients(container:GetItems(), max_per_type, extra, bag_counts)
+                        Scanner.CountIngredients(container:GetItems(), max_per_type, self._cached_extra_ingredients, bag_counts)
                     end
                 end
             end

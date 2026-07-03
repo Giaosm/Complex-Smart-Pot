@@ -44,7 +44,7 @@ local PotPreviewBar = Class(Widget, function(self, initial_checked, on_toggle, o
     local arrow_y_gap = 2
     local arrow_x = slot_area_x + SLOT_PAD + 4 * SLOT_VISUAL + 3 * SLOT_GAP + SLOT_PAD + arrow_size / 2
 
-    self._slot_label = self._bar_root:AddChild(Text(UIFONT, 20, "0/5"))
+    self._slot_label = self._bar_root:AddChild(Text(UIFONT, 20, "1/5"))
     self._slot_label:SetHAlign(ANCHOR_MIDDLE)
     self._slot_label:SetPosition(arrow_x, 0)
 

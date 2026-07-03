@@ -32,6 +32,8 @@ local CookbookData = require("cookbook_data")
 local RecipePanel  = require("widgets/recipe_panel")
 
 local g_cookbook_data = CookbookData()
+local enable_hof_compat = GetModConfigData("enable_hof_compat")
+local enable_myth_compat = GetModConfigData("enable_myth_compat")
 
 AddSimPostInit(function()
     g_cookbook_data:Collect()
@@ -82,8 +84,8 @@ local function ClearAutoCookMemory()
                 panel._pending_recipe_name = nil
                 if panel._pot_bar then
                     panel._pot_bar:UpdateSlots(nil)
-                    panel._pot_bar:SetSlotLabel("0/5")
                 end
+                panel._auto_cook:_UpdatePotBarLabel()
             end
         end
     end
@@ -146,28 +148,19 @@ local function CreateRecipePanel(hud, container, is_brewer)
 
         panel._on_dish_click = function(recipe_name)
             panel._pending_recipe_name = recipe_name
-            if recipe_name then
-                local cooker_ok = panel._cooker_recipes and panel._cooker_recipes[recipe_name]
-                panel:SetAutoCookEnabled(cooker_ok)
-                if cooker_ok then
-                    memory_data._active_recipe = recipe_name
-                    SaveMemoryData()
-                    panel._auto_cook:SwitchToRecipe(recipe_name)
-                else
-                    panel._auto_cook._memory = nil
-                    if panel._pot_bar then
-                        panel._pot_bar:UpdateSlots(nil)
-                        panel._pot_bar:SetSlotLabel("0/5")
-                    end
-                end
+            if recipe_name and panel._cooker_recipes and panel._cooker_recipes[recipe_name] then
+                panel:SetAutoCookEnabled(true)
+                memory_data._active_recipe = recipe_name
+                SaveMemoryData()
+                panel._auto_cook:SwitchToRecipe(recipe_name)
             else
                 panel:SetAutoCookEnabled(false)
                 panel._auto_cook._memory = nil
                 panel._auto_cook._active_recipe = nil
                 if panel._pot_bar then
                     panel._pot_bar:UpdateSlots(nil)
-                    panel._pot_bar:SetSlotLabel("0/5")
                 end
+                panel._auto_cook:_UpdatePotBarLabel()
             end
         end
     end
@@ -283,9 +276,9 @@ AddClassPostConstruct("screens/playerhud", function(self)
 
         if ContainerDetector.IsCookpot(container) then
             CreateRecipePanel(self, container, false)
-        elseif ContainerDetector.IsBrewer(container, GetModConfigData("enable_hof_compat")) then
+        elseif ContainerDetector.IsBrewer(container, enable_hof_compat) then
             CreateRecipePanel(self, container, true)
-        elseif ContainerDetector.IsMyth(container, GetModConfigData("enable_myth_compat")) then
+        elseif ContainerDetector.IsMyth(container, enable_myth_compat) then
             CreateRecipePanel(self, container, false)
         else
             BindExtContainer(container)
@@ -295,7 +288,7 @@ AddClassPostConstruct("screens/playerhud", function(self)
 
     local _CloseContainer = self.CloseContainer
     self.CloseContainer = function(self, container, side)
-        if ContainerDetector.IsCookpot(container) or ContainerDetector.IsBrewer(container, GetModConfigData("enable_hof_compat")) or ContainerDetector.IsMyth(container, GetModConfigData("enable_myth_compat")) then
+        if ContainerDetector.IsCookpot(container) or ContainerDetector.IsBrewer(container, enable_hof_compat) or ContainerDetector.IsMyth(container, enable_myth_compat) then
             DestroyRecipePanel(container)
         else
             UnbindExtContainer(container)

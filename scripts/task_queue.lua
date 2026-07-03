@@ -57,6 +57,11 @@ end
 function TaskQueue:Destroy()
     self:StopCurrent()
     self._func_control = {}
+    if self._orig_on_control then
+        if ThePlayer and ThePlayer.components and ThePlayer.components.playercontroller then
+            ThePlayer.components.playercontroller.OnControl = self._orig_on_control
+        end
+    end
 end
 
 function TaskQueue:IsRunning()
@@ -96,6 +101,14 @@ end
 
 function TaskQueue:RegNowTask(func_loop, func_stop, controls)
     self:StopCurrent()
+
+    if self._wrapper_on_control then
+        local pc = ThePlayer and ThePlayer.components and ThePlayer.components.playercontroller
+        if pc and pc.OnControl ~= self._wrapper_on_control then
+            self._orig_on_control = pc.OnControl
+            pc.OnControl = self._wrapper_on_control
+        end
+    end
 
     self._task_func_stop = func_stop
     self._running = true

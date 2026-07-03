@@ -1,38 +1,16 @@
 -- 组合匹配：给定食材计数，回溯遍历所有组合找到能做的最高优先级料理
 local cooking = require("cooking")
 
-local INGREDIENT_ALIASES = {
-    cookedsmallmeat      = "smallmeat_cooked",
-    cookedmonstermeat    = "monstermeat_cooked",
-    cookedmeat           = "meat_cooked",
-}
-
-local function _BuildNamesTags(prefab_list, ingredients)
-    ingredients = ingredients or cooking.ingredients
-    local names = {}
-    local tags = {}
-    for _, prefab in ipairs(prefab_list) do
-        names[prefab] = (names[prefab] or 0) + 1
-        local ingredient_name = INGREDIENT_ALIASES[prefab] or prefab
-        local data = ingredients[ingredient_name]
-        if data ~= nil and data.tags ~= nil then
-            for tag, val in pairs(data.tags) do
-                tags[tag] = (tags[tag] or 0) + val
-            end
-        end
-    end
-    return names, tags
-end
-
 local ComboMatcher = {}
 
-function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients)
+function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases)
     if not bag_counts or next(bag_counts) == nil then
         return nil
     end
     fixed_counts = fixed_counts or {}
     max_slots = max_slots or 4
     ingredients = ingredients or cooking.ingredients
+    ingredient_aliases = ingredient_aliases or {}
 
     local total_fixed = 0
     for _, c in pairs(fixed_counts) do
@@ -78,6 +56,22 @@ function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_
     local sel_prefabs = {}
     local sel_counts = {}
 
+    local function _BuildNamesTags(prefab_list)
+        local names = {}
+        local tags = {}
+        for _, prefab in ipairs(prefab_list) do
+            names[prefab] = (names[prefab] or 0) + 1
+            local ingredient_name = ingredient_aliases[prefab] or prefab
+            local data = ingredients[ingredient_name]
+            if data ~= nil and data.tags ~= nil then
+                for tag, val in pairs(data.tags) do
+                    tags[tag] = (tags[tag] or 0) + val
+                end
+            end
+        end
+        return names, tags
+    end
+
     -- 回溯遍历每种食材的取量组合，剩余槽位为 0 时用 test 函数验证能否匹配
     local function try_combine(idx, depth, remaining)
         if depth > 0 and remaining == 0 then
@@ -97,7 +91,7 @@ function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_
                     end
                 end
             end
-            local names, tags = _BuildNamesTags(flat, ingredients)
+            local names, tags = _BuildNamesTags(flat)
             local matched = {}
             local max_priority = nil
             for _, item in ipairs(all_items) do

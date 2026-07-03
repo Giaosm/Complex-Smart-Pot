@@ -49,11 +49,13 @@ local function IsCooker(ent)
     return btn and btn.fn and btn.validfn
 end
 
+local FIND_TAGS = {"structure", "_container"}
+local FIND_MUST_TAGS = {'FX', 'DECOR', 'INLIMBO', 'NOCLICK', 'player'}
+
 local function FindEnts(prefab, range)
     local pos = ThePlayer:GetPosition()
     local ents = TheSim:FindEntities(pos.x, 0, pos.z,
-        range, {"structure", "_container"},
-        {'FX', 'DECOR', 'INLIMBO', 'NOCLICK', 'player'}
+        range, FIND_TAGS, FIND_MUST_TAGS
     )
     local pots = {}
     for _, ent in ipairs(ents) do
@@ -575,7 +577,7 @@ function AutoCook:_UpdatePotBarLabel()
     if not self._panel._pot_bar then return end
     local name = self._active_recipe
     if not name then
-        self._panel._pot_bar:SetSlotLabel("0/5")
+        self._panel._pot_bar:SetSlotLabel("1/5")
         return
     end
     local idx = self:GetCurrentSlotIndex(name)
