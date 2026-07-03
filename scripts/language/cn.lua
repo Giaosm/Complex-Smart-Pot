@@ -1,3 +1,4 @@
+-- 中文语言包
 local STRINGS = GLOBAL.STRINGS
 STRINGS.CSP = {}
 

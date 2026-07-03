@@ -1,3 +1,4 @@
+-- 配方反推：通过 Proxy 拦截 test 函数，反向推导配方的最小/最大需求
 local _DTAG = 0.25
 
 local function ptest(test, names, tags)
@@ -25,6 +26,7 @@ end
 
 local BruteForceSearch
 
+-- 智能搜索：用 Proxy 的 __index 拦截 test 函数对 names/tags 的访问，逐步递增值直到 test 通过
 local function SmartSearch(test, allnames, alltags)
     local tags = {}
     local names = {}
@@ -81,6 +83,7 @@ local function SmartSearch(test, allnames, alltags)
                             names, tags, names_proxy, tags_proxy)
 end
 
+-- 暴力搜索：SmartSearch 失败时的回退方案，枚举所有 names/tags 组合
 BruteForceSearch = function(test, accessed_names, accessed_tags,
                                 allnames, alltags,
                                 names, tags, names_proxy, tags_proxy)
@@ -169,6 +172,7 @@ local function resolve_tag_display(simple, tag, test, vnp, vtp, vtags)
     simple.mintag_display[tag] = { value = display_val, mode = mode }
 end
 
+-- 最小化配方：逐个移除 name/tag 用量，找到满足 test 的最小值，tags 用二分搜索精确到 0.25
 local function MinimizeRecipe(test, simple, allnames, alltags, names, tags, names_proxy, tags_proxy)
     local vnames = {}
     for name, amt in pairs(simple.minnames) do
@@ -330,6 +334,7 @@ local function MinimizeRecipe(test, simple, allnames, alltags, names, tags, name
     return true
 end
 
+-- 兄弟食材检测：找出可以互相替代的食材组（如任意肉类 = 大肉/小肉/怪物肉）
 local function FindAnalogGroups(test, simple, allnames, alltags)
     if not simple.minnames or next(simple.minnames) == nil then
         return nil

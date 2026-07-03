@@ -1,3 +1,4 @@
+-- 食材扫描：从物品栏/背包/容器中统计可烹饪食材数量
 local cooking = require("cooking")
 
 local Scanner = {}

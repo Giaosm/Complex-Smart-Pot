@@ -1,3 +1,4 @@
+-- 食谱弹窗：显示料理详情（三维、食物类型、腐烂时间、配方需求、最高限制）
 local Widget = require("widgets/widget")
 local Image  = require("widgets/image")
 local Text   = require("widgets/text")

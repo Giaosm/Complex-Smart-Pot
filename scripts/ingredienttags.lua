@@ -1,3 +1,4 @@
+-- 食物标签定义：肉类、蔬菜、鱼类、甜味剂等 30+ 种标签的中英文名称
 global("FOODTAGDEFINITIONS")
 FOODTAGDEFINITIONS = FOODTAGDEFINITIONS or {}
 

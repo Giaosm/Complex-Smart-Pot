@@ -1,3 +1,4 @@
+-- 自动做饭：打开烹饪锅→放入食材→点击烹饪，支持多锅循环
 local RANGE_DEFAULT = 30
 local RANGE_MIN = 5
 local RANGE_MAX = 99
@@ -318,6 +319,7 @@ local function MoveItemFromAllOfSlot(slot, srccontainer, destcontainer)
     end
 end
 
+-- 检查背包中是否有食材能满足需求，构建 ingredients→slot 的映射
 local function CheckIng(data, notcont)
     local ing_data = {}
     for _, prefab in ipairs(data) do
@@ -367,6 +369,7 @@ local function ClearContainer(container, cont)
     end
 end
 
+-- 自动做饭主流程：找锅→打开→清空→放入→点击烹饪，多锅循环
 local function Cook(prefab, data, range)
     if HasActiveItem() then
         return Silent()

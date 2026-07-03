@@ -1,3 +1,4 @@
+-- 任务队列：劫持玩家操作，支持任意按键中止，用于自动做饭流程控制
 local id_push_thread = "task_queue_push_thread"
 
 local Mouse_controls = {

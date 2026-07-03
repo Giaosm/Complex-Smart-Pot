@@ -1,3 +1,4 @@
+-- 容器检测：判断容器类型（烹饪锅/酿酒桶/炼丹炉）
 local function IsCookpotContainer(container)
     if container == nil then
         return false

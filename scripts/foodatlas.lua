@@ -1,3 +1,4 @@
+-- 食物图标图集：注册和查询食物图标资源
 global("RegisterFoodAtlas")
 global("GetFoodAtlas")
 local FoodAtlasLookup = {}

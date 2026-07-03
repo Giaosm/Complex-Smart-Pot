@@ -1,3 +1,4 @@
+-- 模组配置：名称、版本、语言、功能开关
 local isCh = locale and locale:match("^zh")
 
 name = isCh and "复杂智能锅" or "Complex Smart Pot"

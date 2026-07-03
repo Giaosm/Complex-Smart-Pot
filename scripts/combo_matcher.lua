@@ -1,3 +1,4 @@
+-- 组合匹配：给定食材计数，回溯遍历所有组合找到能做的最高优先级料理
 local cooking = require("cooking")
 
 local INGREDIENT_ALIASES = {
@@ -77,6 +78,7 @@ function ComboMatcher.Match(all_items, bag_counts, fixed_counts, cooker_recipes,
     local sel_prefabs = {}
     local sel_counts = {}
 
+    -- 回溯遍历每种食材的取量组合，剩余槽位为 0 时用 test 函数验证能否匹配
     local function try_combine(idx, depth, remaining)
         if depth > 0 and remaining == 0 then
             local flat = {}

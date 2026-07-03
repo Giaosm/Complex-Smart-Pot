@@ -1,3 +1,4 @@
+-- 食谱面板：分类按钮、排序、食材监听、实时筛选、背包检测的主 UI 面板
 local Widget         = require("widgets/widget")
 local Image          = require("widgets/image")
 local ImageButton    = require("widgets/imagebutton")

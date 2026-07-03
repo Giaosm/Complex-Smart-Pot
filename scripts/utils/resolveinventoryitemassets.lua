@@ -1,3 +1,4 @@
+-- 食材图标解析：多策略解析（prefab资产→AllRecipes→Scrapbook→FoodAtlas），带缓存
 local GetInventoryItemAtlas = require "utils/getinventoryitematlas"
 local SanitizeAssets = require "utils/sanitizeassets"
 

@@ -1,3 +1,4 @@
+-- 食物标签图标解析：验证并返回标签图标的有效资源
 local SanitizeAssets = require "utils/sanitizeassets"
 local ResolveInventoryItemAssets = require "utils/resolveinventoryitemassets"
 

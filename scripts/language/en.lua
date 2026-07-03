@@ -1,3 +1,4 @@
+-- 英文语言包
 local STRINGS = GLOBAL.STRINGS
 STRINGS.CSP = STRINGS.CSP or {}
 

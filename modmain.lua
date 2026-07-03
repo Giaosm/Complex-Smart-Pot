@@ -1,3 +1,4 @@
+-- 模组入口：Hook 容器开关、创建/销毁 RecipePanel、管理自动做饭记忆
 GLOBAL.setmetatable(env, { __index = function(t, k) return GLOBAL.rawget(GLOBAL, k) end })
 
 Assets = Assets or {}

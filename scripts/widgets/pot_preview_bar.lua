@@ -1,3 +1,4 @@
+-- 自动做饭预览条：显示槽位食材，支持 5 套配方记忆切换
 local Widget = require("widgets/widget")
 local Image = require("widgets/image")
 local ImageButton = require("widgets/imagebutton")

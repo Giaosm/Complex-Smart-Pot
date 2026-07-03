@@ -1,3 +1,4 @@
+-- 料理数据：收集全部食谱（原版+酿酒+炼丹），提供筛选/匹配/评分/组合搜索
 local cooking = require("cooking")
 local Detector = require("recipe_detector")
 local ResolveIcon = require("utils/resolveinventoryitemassets")
@@ -323,6 +324,7 @@ local function _BuildNamesTags(prefab_list, ingredients)
     return names, tags
 end
 
+-- 核心筛选：用排除法检查每个配方，食材必须满足 minnames/mintags，且不超 maxnames/maxtags
 local function _CheckMinRequirements(reqs, resolved, tags, remaining_slots, max_tag_values, ingredients, max_slots)
     max_slots = max_slots or 4
     if remaining_slots >= max_slots then
@@ -552,6 +554,7 @@ function CookbookData:GetPossibleRecipes(prefab_list, ingredients, max_slots, ma
                 end
             end
             if ok then
+                -- 检查食材是否满足配方的最低需求，含兄弟食材组的最小数量约束
                 ok = _CheckMinRequirements(reqs, resolved, tags, remaining_slots, max_tag_values, ingredients, max_slots)
             end
             if ok then

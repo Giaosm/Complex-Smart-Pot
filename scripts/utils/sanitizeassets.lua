@@ -1,3 +1,4 @@
+-- 资源验证：检查纹理和图集文件是否存在，不存在的回退到 unknown.tex
 local UNKNOWN_TEX = "unknown.tex"
 local UNKNOWN_ATLAS = resolvefilepath_soft("images/food_tags.xml")
 
