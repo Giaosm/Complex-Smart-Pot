@@ -26,6 +26,7 @@ local function LoadLanguage()
 end
 LoadLanguage()
 
+local ContainerDetector = require("container_detector")
 local CookbookData = require("cookbook_data")
 local RecipePanel  = require("widgets/recipe_panel")
 
@@ -87,48 +88,6 @@ local function ClearAutoCookMemory()
     end
 end
 _G.ClearAutoCookMemory = ClearAutoCookMemory
-
-local function IsCookpotContainer(container)
-    if container == nil then
-        return false
-    end
-
-    local rep = container.replica and container.replica.container
-    if rep == nil or rep.type ~= "cooker" then
-        return false
-    end
-
-    return container:HasTag("stewer") and rep:GetNumSlots() == 4
-end
-
-local function IsBrewerContainer(container)
-    if container == nil then
-        return false
-    end
-
-    if not GetModConfigData("enable_hof_compat") then
-        return false
-    end
-
-    local rep = container.replica and container.replica.container
-    if rep == nil or rep.type ~= "brewer" then
-        return false
-    end
-
-    return container:HasTag("brewer") and rep:GetNumSlots() == 3
-end
-
-local function IsMythContainer(container)
-    if container == nil then
-        return false
-    end
-
-    if not GetModConfigData("enable_myth_compat") then
-        return false
-    end
-
-    return container.prefab == "alchmy_fur"
-end
 
 local function CreateRecipePanel(hud, container, is_brewer)
     if recipe_panels[container] ~= nil then
@@ -310,11 +269,11 @@ AddClassPostConstruct("screens/playerhud", function(self)
     self.OpenContainer = function(self, container, side)
         _OpenContainer(self, container, side)
 
-        if IsCookpotContainer(container) then
+        if ContainerDetector.IsCookpot(container) then
             CreateRecipePanel(self, container, false)
-        elseif IsBrewerContainer(container) then
+        elseif ContainerDetector.IsBrewer(container) then
             CreateRecipePanel(self, container, true)
-        elseif IsMythContainer(container) then
+        elseif ContainerDetector.IsMyth(container) then
             CreateRecipePanel(self, container, false)
         else
             BindExtContainer(container)
@@ -324,7 +283,7 @@ AddClassPostConstruct("screens/playerhud", function(self)
 
     local _CloseContainer = self.CloseContainer
     self.CloseContainer = function(self, container, side)
-        if IsCookpotContainer(container) or IsBrewerContainer(container) or IsMythContainer(container) then
+        if ContainerDetector.IsCookpot(container) or ContainerDetector.IsBrewer(container) or ContainerDetector.IsMyth(container) then
             DestroyRecipePanel(container)
         else
             UnbindExtContainer(container)
