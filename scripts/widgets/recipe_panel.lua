@@ -15,6 +15,7 @@ local function SafeSetTexture(img, atlas, tex)
     end
 end
 local cooking = require("cooking")
+local Scanner = require("inventory_scanner")
 
 local AutoCook = nil
 local function GetAutoCook()
@@ -624,29 +625,23 @@ function RecipePanel:_RefreshBackpackRecipes()
     end
 
     local max_per_type = self._max_slots - pot_count
-    local function count_items(items, bag_counts)
-        if not items then return end
-        for _, item in pairs(items) do
-            if item and item.prefab then
-                local is_ingredient = cooking.ingredients[item.prefab] ~= nil
-                    or cooking.ingredients[self.data._ingredient_aliases[item.prefab]] ~= nil
-                    or (self._brewing_ingredients and self._brewing_ingredients[item.prefab])
-                    or (self._myth_ingredients and self._myth_ingredients[item.prefab])
-                if is_ingredient then
-                    local count = 1
-                    if item.replica and item.replica.stackable then
-                        count = item.replica.stackable:StackSize()
-                    elseif item.components and item.components.stackable then
-                        count = item.components.stackable:StackSize()
-                    end
-                    bag_counts[item.prefab] = math.min((bag_counts[item.prefab] or 0) + count, max_per_type)
-                end
-            end
+
+    local extra = {}
+    for alias, _ in pairs(self.data._ingredient_aliases) do
+        extra[alias] = true
+    end
+    if self._brewing_ingredients then
+        for k, _ in pairs(self._brewing_ingredients) do
+            extra[k] = true
+        end
+    end
+    if self._myth_ingredients then
+        for k, _ in pairs(self._myth_ingredients) do
+            extra[k] = true
         end
     end
 
-    local bag_counts = {}
-    count_items(inv:GetItems(), bag_counts)
+    local bag_counts = Scanner.CountIngredients(inv:GetItems(), max_per_type, extra)
 
     if self._backpack_check_mode == "backpack_and_inv" or self._backpack_check_mode == "all" then
         local open_containers = inv:GetOpenContainers() or {}
@@ -656,7 +651,7 @@ function RecipePanel:_RefreshBackpackRecipes()
                 if container then
                     local is_backpack = container_inst:HasTag("INLIMBO")
                     if is_backpack or self._backpack_check_mode == "all" then
-                        count_items(container:GetItems(), bag_counts)
+                        Scanner.CountIngredients(container:GetItems(), max_per_type, extra, bag_counts)
                     end
                 end
             end
