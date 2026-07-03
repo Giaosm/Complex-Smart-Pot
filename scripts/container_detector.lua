@@ -10,11 +10,8 @@ local function IsCookpotContainer(container)
     return container:HasTag("stewer") and rep:GetNumSlots() == 4
 end
 
-local function IsBrewerContainer(container)
-    if container == nil then
-        return false
-    end
-    if not GetModConfigData("enable_hof_compat") then
+local function IsBrewerContainer(container, enable_hof)
+    if container == nil or not enable_hof then
         return false
     end
     local rep = container.replica and container.replica.container
@@ -24,11 +21,8 @@ local function IsBrewerContainer(container)
     return container:HasTag("brewer") and rep:GetNumSlots() == 3
 end
 
-local function IsMythContainer(container)
-    if container == nil then
-        return false
-    end
-    if not GetModConfigData("enable_myth_compat") then
+local function IsMythContainer(container, enable_myth)
+    if container == nil or not enable_myth then
         return false
     end
     return container.prefab == "alchmy_fur"

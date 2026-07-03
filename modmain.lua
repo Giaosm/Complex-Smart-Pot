@@ -272,9 +272,9 @@ AddClassPostConstruct("screens/playerhud", function(self)
 
         if ContainerDetector.IsCookpot(container) then
             CreateRecipePanel(self, container, false)
-        elseif ContainerDetector.IsBrewer(container) then
+        elseif ContainerDetector.IsBrewer(container, GetModConfigData("enable_hof_compat")) then
             CreateRecipePanel(self, container, true)
-        elseif ContainerDetector.IsMyth(container) then
+        elseif ContainerDetector.IsMyth(container, GetModConfigData("enable_myth_compat")) then
             CreateRecipePanel(self, container, false)
         else
             BindExtContainer(container)
@@ -284,7 +284,7 @@ AddClassPostConstruct("screens/playerhud", function(self)
 
     local _CloseContainer = self.CloseContainer
     self.CloseContainer = function(self, container, side)
-        if ContainerDetector.IsCookpot(container) or ContainerDetector.IsBrewer(container) or ContainerDetector.IsMyth(container) then
+        if ContainerDetector.IsCookpot(container) or ContainerDetector.IsBrewer(container, GetModConfigData("enable_hof_compat")) or ContainerDetector.IsMyth(container, GetModConfigData("enable_myth_compat")) then
             DestroyRecipePanel(container)
         else
             UnbindExtContainer(container)
