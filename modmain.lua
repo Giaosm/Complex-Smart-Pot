@@ -197,7 +197,10 @@ local function CreateRecipePanel(hud, container, is_brewer)
                 end
                 if not has_empty_slot then
                     if panel._pending_recipe_name then
-                        panel._auto_cook:SaveRecipeMemory(panel._pending_recipe_name, prefab_data)
+                        local matching = panel.data:GetMatchingRecipes(container.prefab, prefab_data, panel._brewing_ingredients)
+                        if matching and matching[panel._pending_recipe_name] then
+                            panel._auto_cook:SaveRecipeMemory(panel._pending_recipe_name, prefab_data)
+                        end
                     end
                     panel._pending_recipe_name = nil
                 end
