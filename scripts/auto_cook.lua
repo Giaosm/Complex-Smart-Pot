@@ -592,20 +592,18 @@ end
 
 function AutoCook:RestoreRecipeMemories(recipe_map)
     if not recipe_map then return end
-    local max_slots = self._panel._max_slots or 4
     self._recipe_memories = {}
     for recipe_name, mem in pairs(recipe_map) do
         if type(mem) == "table" then
             if mem.slots then
                 local new_mem = { slots = {}, selected = mem.selected or 1 }
                 for i, slot_data in pairs(mem.slots) do
-                    if type(slot_data) == "table" and type(slot_data.ingredients) == "table"
-                        and #slot_data.ingredients == max_slots then
+                    if type(slot_data) == "table" and type(slot_data.ingredients) == "table" then
                         new_mem.slots[tonumber(i) or i] = { ingredients = slot_data.ingredients }
                     end
                 end
                 self._recipe_memories[recipe_name] = new_mem
-            elseif type(mem[1]) == "string" and #mem == max_slots then
+            elseif type(mem[1]) == "string" then
                 self._recipe_memories[recipe_name] = {
                     slots = { [1] = { ingredients = mem } },
                     selected = 1,
