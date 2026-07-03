@@ -646,11 +646,13 @@ function AutoCook:Execute()
     Say(STRINGS.CSP.AUTO_START)
     self._task_queue:RegNowTask(
         function()
+            Sleep(0)
             return Cook(prefab, data, self._range_search)
         end,
         function()
             Say(STRINGS.CSP.AUTO_STOP)
-        end
+        end,
+        "keyboard"
     )
 
     return true
