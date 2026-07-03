@@ -634,7 +634,7 @@ function CookbookData:GetMatchingRecipes(cooker, prefab_list, ingredients)
 end
 
 function CookbookData:GetMatchingRecipesFromCounts(cooker, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients)
-    return ComboMatcher.Match(self.all, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients)
+    return ComboMatcher.Match(cooker, self.all, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients)
 end
 
 function CookbookData:GetHighlightedRecipes(matching, cooker_recipes)

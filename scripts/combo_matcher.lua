@@ -26,7 +26,7 @@ end
 
 local ComboMatcher = {}
 
-function ComboMatcher.Match(all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients)
+function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients)
     if not bag_counts or next(bag_counts) == nil then
         return nil
     end
