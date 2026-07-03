@@ -574,7 +574,7 @@ end
 function AutoCook:_UpdatePotBarLabel()
     if not self._panel._pot_bar then return end
     local name = self._active_recipe
-    if not name then
+    if not name or not self:GetRecipeMemory(name) then
         self._panel._pot_bar:SetSlotLabel("0/5")
         return
     end
@@ -591,8 +591,8 @@ function AutoCook:SetRecipeMemorySaveCallback(fn)
 end
 
 function AutoCook:RestoreRecipeMemories(recipe_map)
-    if not recipe_map then return end
     self._recipe_memories = {}
+    if not recipe_map then return end
     for recipe_name, mem in pairs(recipe_map) do
         if type(mem) == "table" then
             if mem.slots then
