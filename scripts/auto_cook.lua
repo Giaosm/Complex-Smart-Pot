@@ -574,7 +574,7 @@ end
 function AutoCook:_UpdatePotBarLabel()
     if not self._panel._pot_bar then return end
     local name = self._active_recipe
-    if not name or not self:GetRecipeMemory(name) then
+    if not name then
         self._panel._pot_bar:SetSlotLabel("0/5")
         return
     end
