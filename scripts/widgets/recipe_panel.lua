@@ -102,9 +102,10 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
     self._active_popup_data = nil
     self._backpack_dirty = false
     self._scroll_to_prefab = nil
-    self._cached_extra_ingredients = nil
+    self._cached_device_ingredients = nil
+    self._cached_bag_counts = nil
 
-    if self._enable_auto_cook then
+	if self._enable_auto_cook then
         self._auto_cook = GetAutoCook()(self, range_init)
     end
 
@@ -557,7 +558,7 @@ end
 function RecipePanel:SetCooker(cooker_prefab, is_brewer)
     self._cooker = cooker_prefab
     self._is_brewer = is_brewer == true
-    self._cached_extra_ingredients = nil
+    self._cached_bag_counts = nil
 
     if self._is_brewer then
         self._max_slots = 3
@@ -566,10 +567,12 @@ function RecipePanel:SetCooker(cooker_prefab, is_brewer)
             self._brewing_ingredients = hof_brewing.brewingredients
             self._brewer_recipes = (hof_brewing.recipes or {})[cooker_prefab] or {}
             self._cooker_recipes = self._brewer_recipes
+            self._cached_device_ingredients = self._brewing_ingredients
         else
             self._brewing_ingredients = nil
             self._brewer_recipes = {}
             self._cooker_recipes = {}
+            self._cached_device_ingredients = nil
         end
     else
         self._max_slots = 4
@@ -592,11 +595,21 @@ function RecipePanel:SetCooker(cooker_prefab, is_brewer)
                         end
                     end
                 end
+                self._cached_device_ingredients = self._myth_ingredients
             else
                 self._myth_ingredients = nil
+                self._cached_device_ingredients = {}
+                for k, v in pairs(cooking.ingredients) do
+                    self._cached_device_ingredients[k] = v
+                end
+                for alias, _ in pairs(self.data._ingredient_aliases) do
+                    self._cached_device_ingredients[alias] = true
+                end
             end
         else
             self._cooker_recipes = nil
+            self._myth_ingredients = nil
+            self._cached_device_ingredients = nil
         end
     end
     self:RefreshDisplay()
@@ -627,41 +640,63 @@ function RecipePanel:_RefreshBackpackRecipes()
 
     local max_per_type = self._max_slots - pot_count
 
-    if not self._cached_extra_ingredients then
-        self._cached_extra_ingredients = {}
-        for alias, _ in pairs(self.data._ingredient_aliases) do
-            self._cached_extra_ingredients[alias] = true
-        end
-        if self._brewing_ingredients then
-            for k, _ in pairs(self._brewing_ingredients) do
-                self._cached_extra_ingredients[k] = true
-            end
-        end
-        if self._myth_ingredients then
-            for k, _ in pairs(self._myth_ingredients) do
-                self._cached_extra_ingredients[k] = true
-            end
-        end
+    local bag_counts = {}
+    if self._backpack_check_mode ~= "fridge" then
+        bag_counts = Scanner.CountIngredients(inv:GetItems(), max_per_type, self._cached_device_ingredients)
     end
 
-    local bag_counts = Scanner.CountIngredients(inv:GetItems(), max_per_type, self._cached_extra_ingredients)
+    local open_containers = inv:GetOpenContainers() or {}
+    for container_inst, _ in pairs(open_containers) do
+        if container_inst ~= self._container then
+            local container = container_inst.replica and container_inst.replica.container
+            if container then
+                local is_backpack = container_inst:HasTag("INLIMBO")
+                local is_fridge = container_inst.prefab == "icebox" or container_inst.prefab == "saltbox"
 
-    if self._backpack_check_mode == "backpack_and_inv" or self._backpack_check_mode == "all" then
-        local open_containers = inv:GetOpenContainers() or {}
-        for container_inst, _ in pairs(open_containers) do
-            if container_inst ~= self._container then
-                local container = container_inst.replica and container_inst.replica.container
-                if container then
-                    local is_backpack = container_inst:HasTag("INLIMBO")
-                    if is_backpack or self._backpack_check_mode == "all" then
-                        Scanner.CountIngredients(container:GetItems(), max_per_type, self._cached_extra_ingredients, bag_counts)
-                    end
+                local should_scan = false
+                if self._backpack_check_mode == "backpack_and_inv" then
+                    should_scan = is_backpack
+                elseif self._backpack_check_mode == "all" then
+                    should_scan = true
+                elseif self._backpack_check_mode == "fridge" or self._backpack_check_mode == "fridge_and_inv" then
+                    should_scan = is_fridge
+                end
+
+                if should_scan then
+                    Scanner.CountIngredients(container:GetItems(), max_per_type, self._cached_device_ingredients, bag_counts)
                 end
             end
         end
     end
 
-    self._backpack_recipes = self.data:GetMatchingRecipesFromCounts(self._cooker, bag_counts, pot_counts, self._cooker_recipes, self._max_slots, self._brewing_ingredients)
+    if next(bag_counts) == nil then
+	self._backpack_recipes = nil
+	self._cached_bag_counts = {}
+    else
+	local cached = self._cached_bag_counts
+	local same = cached and true or false
+	if same then
+	    for k, v in pairs(bag_counts) do
+	        if cached[k] ~= v then same = false; break end
+	    end
+	end
+	if same then
+	    for k, v in pairs(cached) do
+	        if bag_counts[k] ~= v then same = false; break end
+	    end
+	end
+	if same then
+	    self._backpack_dirty = false
+	    return
+	end
+
+	self._cached_bag_counts = {}
+	for k, v in pairs(bag_counts) do
+	    self._cached_bag_counts[k] = v
+	end
+
+	self._backpack_recipes = self.data:GetMatchingRecipesFromCounts(self._cooker, bag_counts, pot_counts, self._cooker_recipes, self._max_slots, self._brewing_ingredients)
+    end
     self._backpack_dirty = false
 end
 

@@ -78,6 +78,8 @@ configuration_options = {
             { description = isCh and "物品栏" or "Inv", data = "inv", hover = isCh and "只检测物品栏" or "player inventory" },
             { description = isCh and "背包+物品栏" or "Bag+Inv", data = "backpack_and_inv", hover = isCh and "检测背包和物品栏" or "backpack + inventory" },
             { description = isCh and "所有容器" or "All", data = "all", hover = isCh and "检测所有打开的容器" or "all open containers" },
+            { description = isCh and "冰箱+盐盒" or "Fridge+Salt", data = "fridge", hover = isCh and "检测冰箱和盐盒" or "icebox + saltbox" },
+            { description = isCh and "冰箱+盐盒+物品栏" or "Fridge+Salt+Inv", data = "fridge_and_inv", hover = isCh and "检测冰箱、盐盒和物品栏" or "icebox + saltbox + inventory" },
         },
         default = "off",
     },
