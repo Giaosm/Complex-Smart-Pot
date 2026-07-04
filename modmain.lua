@@ -236,13 +236,27 @@ end)
 
 local ext_container_listeners = {}
 
+local notify_debounce_task = nil
 local function NotifyAllPanels()
-    for _, panel in pairs(recipe_panels) do
-        if panel.MarkBackpackDirty then
-            panel:MarkBackpackDirty()
-            panel:RefreshDisplay()
+    if notify_debounce_task then return end
+    if not ThePlayer then
+        for _, panel in pairs(recipe_panels) do
+            if panel.MarkBackpackDirty then
+                panel:MarkBackpackDirty()
+                panel:RefreshDisplay()
+            end
         end
+        return
     end
+    notify_debounce_task = ThePlayer:DoTaskInTime(0.15, function()
+        notify_debounce_task = nil
+        for _, panel in pairs(recipe_panels) do
+            if panel.MarkBackpackDirty then
+                panel:MarkBackpackDirty()
+                panel:RefreshDisplay()
+            end
+        end
+    end)
 end
 
 local function BindExtContainer(container)

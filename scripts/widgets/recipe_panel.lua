@@ -634,6 +634,7 @@ function RecipePanel:_RefreshBackpackRecipes()
 
     if pot_count >= self._max_slots then
         self._backpack_recipes = self.data:GetHighlightedRecipes(self._matching_recipes, self._cooker_recipes)
+        self._cached_bag_counts = {}
         self._backpack_dirty = false
         return
     end
@@ -643,6 +644,15 @@ function RecipePanel:_RefreshBackpackRecipes()
     local bag_counts = {}
     if self._backpack_check_mode ~= "fridge" then
         bag_counts = Scanner.CountIngredients(inv:GetItems(), max_per_type, self._cached_device_ingredients)
+    end
+
+    local active_item = inv:GetActiveItem()
+    if active_item and active_item.prefab and self._cached_device_ingredients and self._cached_device_ingredients[active_item.prefab] then
+        local count = 1
+        if active_item.replica and active_item.replica.stackable then
+            count = active_item.replica.stackable:StackSize()
+        end
+        bag_counts[active_item.prefab] = math.min((bag_counts[active_item.prefab] or 0) + count, max_per_type)
     end
 
     local open_containers = inv:GetOpenContainers() or {}
@@ -677,12 +687,12 @@ function RecipePanel:_RefreshBackpackRecipes()
 	local same = cached and true or false
 	if same then
 	    for k, v in pairs(bag_counts) do
-	        if cached[k] ~= v then same = false; break end
+	        if (cached[k] or 0) ~= math.min(v, max_per_type) then same = false; break end
 	    end
 	end
 	if same then
 	    for k, v in pairs(cached) do
-	        if bag_counts[k] ~= v then same = false; break end
+	        if v ~= math.min(bag_counts[k] or 0, max_per_type) then same = false; break end
 	    end
 	end
 	if same then
@@ -692,7 +702,7 @@ function RecipePanel:_RefreshBackpackRecipes()
 
 	self._cached_bag_counts = {}
 	for k, v in pairs(bag_counts) do
-	    self._cached_bag_counts[k] = v
+	    self._cached_bag_counts[k] = math.min(v, max_per_type)
 	end
 
 	self._backpack_recipes = self.data:GetMatchingRecipesFromCounts(self._cooker, bag_counts, pot_counts, self._cooker_recipes, self._max_slots, self._brewing_ingredients)
@@ -785,7 +795,13 @@ function RecipePanel:StartMonitor(container)
     if self._backpack_check_mode ~= "off" and self._player_inst then
         self._on_player_inventory_change = function()
             self._backpack_dirty = true
-            self:RefreshDisplay()
+            if self._inv_debounce_task then
+                self._inv_debounce_task:Cancel()
+            end
+            self._inv_debounce_task = self.inst:DoTaskInTime(0.15, function()
+                self._inv_debounce_task = nil
+                self:RefreshDisplay()
+            end)
         end
         self._player_inst:ListenForEvent("itemget", self._on_player_inventory_change)
         self._player_inst:ListenForEvent("itemlose", self._on_player_inventory_change)
