@@ -64,7 +64,7 @@ local SORT_STATE_NONE = 0
 local SORT_STATE_DESC = 1
 local SORT_STATE_ASC  = 2
 
-local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst, backpack_check_mode, enable_auto_cook, range_init, prefs)
+local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst, backpack_check_mode, auto_cook_source, range_init, prefs)
     Widget._ctor(self, "RecipePanel")
 
     self.data = cookbook_data
@@ -72,7 +72,8 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
     self._T = env.tuning
     self._player_inst = player_inst
     self._backpack_check_mode = backpack_check_mode or "off"
-    self._enable_auto_cook = enable_auto_cook ~= false
+    self._auto_cook_source = auto_cook_source or "off"
+    self._enable_auto_cook = self._auto_cook_source ~= "off"
     self._prefs = prefs or {}
 
     self._cooker = nil
@@ -106,7 +107,7 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
     self._cached_bag_counts = nil
 
 	if self._enable_auto_cook then
-        self._auto_cook = GetAutoCook()(self, range_init)
+        self._auto_cook = GetAutoCook()(self, range_init, self._auto_cook_source)
     end
 
     self:SetScale(2 / 3, 2 / 3, 2 / 3)

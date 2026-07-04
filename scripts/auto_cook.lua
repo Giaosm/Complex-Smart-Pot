@@ -186,8 +186,8 @@ local function IsOpenContainer(cont_inst)
 
     local open_conts = inv:GetOpenContainers()
     if open_conts then
-        for _, oc in pairs(open_conts) do
-            if oc == cont_inst then return container end
+        for oc, _ in pairs(open_conts) do
+	        if oc == cont_inst then return container end
         end
     end
 
@@ -243,29 +243,67 @@ local function GetStackSize(item)
     return 1
 end
 
-local function GetSlotsFromAll()
+local function _ShouldScanContainer(container_inst, source)
+    if source == "inv" then return false end
+    local is_fridge = container_inst.prefab == "icebox" or container_inst.prefab == "saltbox"
+    if source == "fridge" or source == "fridge_and_inv" then return is_fridge end
+    return true
+end
+
+local function _GetOpenContainerSlots(source)
     local slots = {}
     local inv = PlayerInv()
     if not inv then return slots end
+    local backpack = inv:GetEquippedItem(EQUIPSLOTS.BODY)
+    local open_conts = inv:GetOpenContainers() or {}
+    for cont_inst, _ in pairs(open_conts) do
+        if cont_inst ~= backpack and _ShouldScanContainer(cont_inst, source) then
+            local container = cont_inst.replica and cont_inst.replica.container
+            if container then
+                for i = 1, container:GetNumSlots() do
+                    local item = container:GetItemInSlot(i)
+                    if item then
+                        table.insert(slots, { slot = i, cont = cont_inst, item = item })
+                    end
+                end
+            end
+        end
+    end
+    return slots
+end
 
-    local num = inv:GetNumSlots()
-    for i = 1, num do
-        local item = inv:GetItemInSlot(i)
-        if item then
-            table.insert(slots, { slot = i, cont = ThePlayer, item = item })
+local function GetSlotsFromAll(source)
+    source = source or "inv"
+    local slots = {}
+
+    if source ~= "inv" then
+        local open_slots = _GetOpenContainerSlots(source)
+        for _, s in ipairs(open_slots) do table.insert(slots, s) end
+    end
+
+    local inv = PlayerInv()
+    if not inv then return slots end
+
+    if source ~= "fridge" then
+        local backpack = inv:GetEquippedItem(EQUIPSLOTS.BODY)
+        if backpack then
+            local bp_cont = backpack.replica and backpack.replica.container
+            if bp_cont then
+                for i = 1, bp_cont:GetNumSlots() do
+                    local item = bp_cont:GetItemInSlot(i)
+                    if item then
+                        table.insert(slots, { slot = i, cont = backpack, item = item })
+                    end
+                end
+            end
         end
     end
 
-    local backpack = inv:GetEquippedItem("back")
-    if backpack then
-        local bp_cont = backpack.replica and backpack.replica.container
-        if bp_cont then
-            local num = bp_cont:GetNumSlots()
-            for i = 1, num do
-                local item = bp_cont:GetItemInSlot(i)
-                if item then
-                    table.insert(slots, { slot = i, cont = backpack, item = item })
-                end
+    if source ~= "fridge" then
+        for i = 1, inv:GetNumSlots() do
+            local item = inv:GetItemInSlot(i)
+            if item then
+                table.insert(slots, { slot = i, cont = ThePlayer, item = item })
             end
         end
     end
@@ -274,7 +312,8 @@ local function GetSlotsFromAll()
 end
 
 local function containerCanHas(invent, item)
-    for i = 1, invent:GetNumSlots() do
+    local num = invent:GetNumSlots()
+    for i = 1, num do
         local slot_item = invent:GetItemInSlot(i)
         if not slot_item then
             return true
@@ -291,16 +330,16 @@ local function CanTakeItem(item)
     local inv = PlayerInv()
     if not inv then return nil end
 
-    if containerCanHas(inv, item) then
-        return ThePlayer
-    end
-
-    local backpack = inv:GetEquippedItem("back")
+    local backpack = inv:GetEquippedItem(EQUIPSLOTS.BODY)
     if backpack then
         local bp_cont = backpack.replica and backpack.replica.container
         if bp_cont and containerCanHas(bp_cont, item) then
             return backpack
         end
+    end
+
+    if containerCanHas(inv, item) then
+        return ThePlayer
     end
 
     return nil
@@ -321,14 +360,13 @@ local function MoveItemFromAllOfSlot(slot, srccontainer, destcontainer)
     end
 end
 
--- 检查背包中是否有食材能满足需求，构建 ingredients→slot 的映射
-local function CheckIng(data, notcont)
+local function CheckIng(data, auto_cook_source, notcont)
     local ing_data = {}
     for _, prefab in ipairs(data) do
         ing_data[prefab] = (ing_data[prefab] or 0) + 1
     end
 
-    local slots = GetSlotsFromAll()
+    local slots = GetSlotsFromAll(auto_cook_source)
     local order_slots = {}
 
     for prefab, size_ing in pairs(ing_data) do
@@ -371,8 +409,7 @@ local function ClearContainer(container, cont)
     end
 end
 
--- 自动做饭主流程：找锅→打开→清空→放入→点击烹饪，多锅循环
-local function Cook(prefab, data, range)
+local function Cook(prefab, data, range, auto_cook_source)
     if HasActiveItem() then
         return Silent()
     end
@@ -382,7 +419,7 @@ local function Cook(prefab, data, range)
         return Silent()
     end
 
-    local ret = CheckIng(data)
+    local ret = CheckIng(data, auto_cook_source)
     if ret then
         local act, right
         local cont = IGetElement(conts, function(target)
@@ -400,7 +437,7 @@ local function Cook(prefab, data, range)
                 local container = OpenContainer(cont)
                 if container then
                     if ClearContainer(container, cont) then
-                        ret = CheckIng(data, cont)
+                        ret = CheckIng(data, auto_cook_source, cont)
                         if ret then
                             for _, slot in ipairs(ret) do
                                 MoveItemFromAllOfSlot(slot.slot, slot.cont, cont)
@@ -452,10 +489,11 @@ local function Cook(prefab, data, range)
     Sleep(0)
 end
 
-local AutoCook = Class(function(self, panel, range_init)
+local AutoCook = Class(function(self, panel, range_init, auto_cook_source)
     self._panel = panel
     self._memory = nil
     self._range_search = range_init or RANGE_DEFAULT
+    self._auto_cook_source = auto_cook_source or "inv"
     self._task_queue = require("task_queue")()
 end)
 
@@ -646,7 +684,7 @@ function AutoCook:Execute()
     Say(STRINGS.CSP.AUTO_START)
     self._task_queue:RegNowTask(
         function()
-            return Cook(prefab, data, self._range_search)
+            return Cook(prefab, data, self._range_search, self._auto_cook_source)
         end,
         function()
             Say(STRINGS.CSP.AUTO_STOP)

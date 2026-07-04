@@ -60,13 +60,17 @@ configuration_options = {
     {
         name = "enable_auto_cook",
         label = isCh and "自动做饭" or "Auto Cook",
-        hover = isCh and "开启后，烹饪锅面板增加「自动做饭」按钮，一键自动烹饪+收料理，只会从物品栏拿取食材"
-        or "Adds Auto Cook button to the cookpot panel for one-click cooking (uses inventory only)",
+        hover = isCh and "开启后，烹饪锅面板增加「自动做饭」按钮，一键自动烹饪+收料理\n决定从哪些来源拿取食材，优先级：已打开的容器>背包>物品栏"
+            or "Adds Auto Cook button to the cookpot panel for one-click cooking\nIngredient source priority: open containers > backpack > inventory",
         options = {
-            { description = isCh and "开启" or "On", data = true },
-            { description = isCh and "关闭" or "Off", data = false },
+            { description = isCh and "关闭" or "Off", data = "off" },
+            { description = isCh and "物品栏" or "Inv", data = "inv", hover = isCh and "只从物品栏拿取" or "player inventory only" },
+            { description = isCh and "背包+物品栏" or "Bag+Inv", data = "backpack_and_inv", hover = isCh and "从背包和物品栏拿取" or "backpack + inventory" },
+            { description = isCh and "所有容器" or "All", data = "all", hover = isCh and "从所有打开的容器拿取" or "all open containers" },
+            { description = isCh and "冰箱+盐盒" or "Fridge+Salt", data = "fridge", hover = isCh and "从冰箱和盐盒拿取" or "icebox + saltbox" },
+            { description = isCh and "冰箱+盐盒+物品栏" or "Fridge+Salt+Inv", data = "fridge_and_inv", hover = isCh and "从冰箱、盐盒和物品栏拿取" or "icebox + saltbox + inventory" },
         },
-        default = false,
+        default = "off",
     },
     {
         name = "enable_backpack_check",

@@ -110,19 +110,19 @@ local function CreateRecipePanel(hud, container, is_brewer)
     end
 
     local enable_backpack = GetModConfigData("enable_backpack_check")
-    if enable_backpack == true then enable_backpack = "inv" end
-    if enable_backpack == false then enable_backpack = "off" end
-	local enable_auto_cook = GetModConfigData("enable_auto_cook")
-	local range_init = enable_auto_cook and (memory_data._range_search or 30) or nil
-	local panel = RecipePanel(g_cookbook_data, { strings = STRINGS, tuning = TUNING }, hud.owner, enable_backpack, enable_auto_cook, range_init, panel_prefs)
+	if enable_backpack == true then enable_backpack = "inv" end
+	if enable_backpack == false then enable_backpack = "off" end
+	local auto_cook_source = GetModConfigData("enable_auto_cook")
+	local range_init = auto_cook_source ~= "off" and (memory_data._range_search or 30) or nil
+	local panel = RecipePanel(g_cookbook_data, { strings = STRINGS, tuning = TUNING }, hud.owner, enable_backpack, auto_cook_source, range_init, panel_prefs)
     parent:AddChild(panel)
     local pos = containerwidget:GetPosition()
     panel:SetPosition(pos.x + 100, pos.y)
     panel:SetCooker(container.prefab, is_brewer)
     panel:StartMonitor(container)
 
-    if enable_auto_cook then
-        local recipe_map = memory_data._recipe_memories
+    if auto_cook_source ~= "off" then
+	    local recipe_map = memory_data._recipe_memories
         if type(recipe_map) == "table" then
             panel._auto_cook:RestoreRecipeMemories(recipe_map)
             local active_name = memory_data._active_recipe
@@ -168,13 +168,13 @@ local function CreateRecipePanel(hud, container, is_brewer)
     local rep = container.replica and container.replica.container
     local btn = rep and rep:GetWidget() and rep:GetWidget().buttoninfo
     if btn and btn.fn then
-        if enable_auto_cook then
+        if auto_cook_source ~= "off" then
             panel._auto_cook:SetStewerFn(container.prefab, btn.fn)
         end
 
         local orig_fn = btn.fn
         btn.fn = function(ent, ...)
-            if enable_auto_cook and ent and ent.replica and ent.replica.container then
+            if auto_cook_source ~= "off" and ent and ent.replica and ent.replica.container then
                 local c = ent.replica.container
                 local prefab_data = {}
                 local has_empty_slot
