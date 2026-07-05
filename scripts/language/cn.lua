@@ -31,6 +31,10 @@ STRINGS.CSP.POPUP_SPECIAL      = "特殊:"
 STRINGS.CSP.AUTO_NEED_RECIPE   = "请先用烹饪锅制作一道菜"
 STRINGS.CSP.AUTO_START         = "自动烹饪开始"
 STRINGS.CSP.AUTO_STOP          = "自动烹饪终止"
+STRINGS.CSP.QUICK_WRONG_DEVICE = "我chovy，你用锅给我用好了啊！"
+STRINGS.CSP.QUICK_NO_MEMORY    = "我不记得这道菜怎么做了"
+STRINGS.CSP.QUICK_NO_SPACE     = "我已经拿不下了"
+STRINGS.CSP.QUICK_NO_INGREDIENTS = "我没有足够的食材"
 
 -- 其他
 STRINGS.CSP.MEMORY_CLEARED     = "复杂智能锅：所有自动烹饪记忆已清空"

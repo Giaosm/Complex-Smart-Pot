@@ -31,6 +31,10 @@ STRINGS.CSP.POPUP_SPECIAL   = "Spc:"
 STRINGS.CSP.AUTO_NEED_RECIPE = "Cook a dish first"
 STRINGS.CSP.AUTO_START       = "Cooking..."
 STRINGS.CSP.AUTO_STOP        = "Stopped"
+STRINGS.CSP.QUICK_WRONG_DEVICE = "Wrong device for this recipe!"
+STRINGS.CSP.QUICK_NO_MEMORY    = "I don't remember how to make this"
+STRINGS.CSP.QUICK_NO_SPACE     = "I can't carry any more"
+STRINGS.CSP.QUICK_NO_INGREDIENTS = "I don't have enough ingredients"
 
 -- Misc
 STRINGS.CSP.MEMORY_CLEARED = "Auto-cook memory cleared"

@@ -24,16 +24,18 @@ description = isCh
 6. 可做检测(默认关闭)：根据选中来源检测可制作的料理
 7. 自动做饭(默认关闭)：一键多锅烹饪，可调范围(默认30格)；
    点击图标→添加食材→点击做饭保存配方；
+   右键料理图标直接放入该设备烹饪；
    控制台 ClearAutoCookMemory() 清空记忆]]
-	    or [[Cooking encyclopedia panel when opening a cookpot:
+	    or [[Displays the full recipe encyclopedia when opening a cookpot, features:
 1. Browse by category: All, Vanilla, Device, Mod, Buffs, Craftable
 2. Sort by Hunger/Health/Sanity ascending/descending
-3. Smart filter: auto-excludes impossible recipes as you add ingredients
-4. Recipe analysis: click an icon to view ingredient/tag requirements
-5. Analog groups: interchangeable ingredients merged in display
-6. Craft check (off by default): highlights craftable recipes based on ingredient source (Off/Bag/Bag+Inv/All)
+3. Real-time ingredient filter: auto-excludes impossible recipes as you add
+4. Recipe analysis: click an icon to view ingredient/tag limits (click again to dismiss)
+5. Analog groups: interchangeable ingredients auto-merged
+6. Craft check (off by default): checks craftable recipes from selected source
 7. Auto cook (off by default): one-click multi-pot cooking, adjustable range (default 30);
-   Click icon → add ingredients → click cook to save recipe;
+   Click icon → add ingredients → click cook to save the recipe;
+   Right-click a recipe icon to cook directly in the current device;
    Console: ClearAutoCookMemory() to clear all memory]]
 
 local function Subtitle(name_cn, name_en)
@@ -63,7 +65,7 @@ configuration_options = {
         hover = isCh and "开启后，烹饪锅面板增加「自动做饭」按钮，一键自动烹饪+收料理\n决定从哪些来源拿取食材，优先级：已打开的容器>背包>物品栏"
             or "Adds Auto Cook button to the cookpot panel for one-click cooking\nIngredient source priority: open containers > backpack > inventory",
         options = {
-            { description = isCh and "关闭" or "Off", data = "off" },
+            { description = isCh and "关闭" or "Off", data = "off", hover = isCh and "关闭后右键点击料理的快捷烹饪也同时关闭" or "Also disables right-click quick cook" },
             { description = isCh and "物品栏" or "Inv", data = "inv", hover = isCh and "只从物品栏拿取" or "player inventory only" },
             { description = isCh and "背包+物品栏" or "Bag+Inv", data = "backpack_and_inv", hover = isCh and "从背包和物品栏拿取" or "backpack + inventory" },
             { description = isCh and "所有容器" or "All", data = "all", hover = isCh and "从所有打开的容器拿取" or "all open containers" },

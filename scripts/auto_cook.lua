@@ -390,31 +390,50 @@ local function CheckIng(data, auto_cook_source, notcont)
     end
 end
 
-local function ClearContainer(container, cont)
-    while type(cont) == "table" and cont.entity and cont:IsValid() and cont.Transform do
-        local items = container:GetItems() or {}
-        if next(items) then
-            for slot, item in pairs(items) do
-                local cont_cantake = CanTakeItem(item)
-                if cont_cantake then
-                    MoveItemFromAllOfSlot(slot, cont, cont_cantake)
-                else
-                    return false
-                end
+local function _SyncPotContents(container, cont, required, auto_cook_source)
+    local items = container:GetItems() or {}
+    local need = {}
+    for _, p in ipairs(required) do
+        need[p] = (need[p] or 0) + 1
+    end
+
+    for slot, item in pairs(items) do
+        if item and item.prefab then
+            local n = need[item.prefab] or 0
+            if n > 0 then
+                need[item.prefab] = n - 1
+            else
+                local dest = CanTakeItem(item)
+                if not dest then return false end
+                MoveItemFromAllOfSlot(slot, cont, dest)
+                Sleep(0)
             end
-        else
-            return true
         end
+    end
+
+    local missing = {}
+    for prefab, count in pairs(need) do
+        for _ = 1, count do
+            table.insert(missing, prefab)
+        end
+    end
+    if #missing == 0 then return true end
+
+    local found = CheckIng(missing, auto_cook_source, cont)
+    if not found then return false end
+    for _, slot in ipairs(found) do
+        MoveItemFromAllOfSlot(slot.slot, slot.cont, cont)
         Sleep(0)
     end
+    return true
 end
 
-local function Cook(prefab, data, range, auto_cook_source)
+local function Cook(prefab, data, range, auto_cook_source, target_cont, quiet)
     if HasActiveItem() then
         return Silent()
     end
 
-    local conts = FindEnts(prefab, range)
+    local conts = target_cont and {target_cont} or FindEnts(prefab, range)
     if not conts[1] then
         return Silent()
     end
@@ -425,7 +444,7 @@ local function Cook(prefab, data, range, auto_cook_source)
         local cont = IGetElement(conts, function(target)
             act, right = GetMouseActionSoft({"HARVEST", "RUMMAGE"}, target)
             if act then
-                if target._flag_next and act.action.id == "RUMMAGE" then
+                if not quiet and target._flag_next and act.action.id == "RUMMAGE" then
                     return
                 end
                 return target
@@ -436,21 +455,13 @@ local function Cook(prefab, data, range, auto_cook_source)
             if act.action.id == "RUMMAGE" then
                 local container = OpenContainer(cont)
                 if container then
-                    if ClearContainer(container, cont) then
-                        ret = CheckIng(data, auto_cook_source, cont)
-                        if ret then
-                            for _, slot in ipairs(ret) do
-                                MoveItemFromAllOfSlot(slot.slot, slot.cont, cont)
-                            end
-                            StewerFn[prefab](cont, ThePlayer)
-                            if #conts > 1 then
-                                cont._flag_next = true
-                                cont:DoTaskInTime(10 * FRAMES, function()
-                                    cont._flag_next = nil
-                                end)
-                            end
-                        else
-                            return Silent()
+                    if _SyncPotContents(container, cont, data, auto_cook_source) then
+                        StewerFn[prefab](cont, ThePlayer)
+                        if not quiet and #conts > 1 then
+                            cont._flag_next = true
+                            cont:DoTaskInTime(10 * FRAMES, function()
+                                cont._flag_next = nil
+                            end)
                         end
                     else
                         return Silent()
@@ -458,7 +469,7 @@ local function Cook(prefab, data, range, auto_cook_source)
                 else
                     return Silent()
                 end
-            else
+            elseif not quiet then
                 DoMouseAction(act, right)
                 Sleep(0)
                 if HasActiveItem() then
@@ -466,7 +477,7 @@ local function Cook(prefab, data, range, auto_cook_source)
                 end
             end
         end
-    else
+    elseif not quiet then
         local act, right
         local pot = IGetElement(conts, function(target)
             act, right = GetMouseActionSoft({"HARVEST"}, target)
@@ -651,6 +662,64 @@ function AutoCook:RestoreRecipeMemories(recipe_map)
             end
         end
     end
+end
+
+function AutoCook:QuickCook(recipe_name)
+    if self._task_queue:IsRunning() then
+        return false
+    end
+
+    local max_slots = self._panel._max_slots or 4
+    local current_container = self._panel._container
+    if not current_container then
+        return false
+    end
+
+    if self._panel._cooker_recipes and not self._panel._cooker_recipes[recipe_name] then
+        Say(STRINGS.CSP.QUICK_WRONG_DEVICE)
+        return false
+    end
+
+    local memory = self:GetRecipeMemory(recipe_name)
+    if not memory or #memory ~= max_slots then
+        Say(STRINGS.CSP.QUICK_NO_MEMORY)
+        return false
+    end
+
+    local slot_data = self._panel._slot_data
+    if slot_data and next(slot_data) then
+        local container = current_container.replica and current_container.replica.container
+        if container then
+            for _, item in pairs(container:GetItems() or {}) do
+                if item and not CanTakeItem(item) then
+                    Say(STRINGS.CSP.QUICK_NO_SPACE)
+                    return false
+                end
+            end
+        end
+    end
+
+    if not CheckIng(memory, self._auto_cook_source, current_container) then
+        Say(STRINGS.CSP.QUICK_NO_INGREDIENTS)
+        return false
+    end
+
+    local hud = ThePlayer and ThePlayer.HUD
+    if hud and hud.CloseContainer and current_container then
+        hud:CloseContainer(current_container)
+    end
+
+    if HasActiveItem() then
+        ReturnActiveItem()
+    end
+
+    self._task_queue:RegNowTask(
+        function()
+            return Cook(current_container.prefab, memory, self._range_search, self._auto_cook_source, current_container, true)
+        end
+    )
+
+    return true
 end
 
 function AutoCook:Execute()

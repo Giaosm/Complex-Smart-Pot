@@ -108,6 +108,9 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
 
 	if self._enable_auto_cook then
         self._auto_cook = GetAutoCook()(self, range_init, self._auto_cook_source)
+        self._on_right_click = function(prefab)
+            self._auto_cook:QuickCook(prefab)
+        end
     end
 
     self:SetScale(2 / 3, 2 / 3, 2 / 3)
@@ -351,6 +354,16 @@ function RecipePanel:MakeScrollList()
                         end
                     end
                 end)
+                if self._on_right_click then
+                    local base_on_control = hover.OnControl
+                    hover.OnControl = function(self_btn, control, down)
+                        if control == CONTROL_SECONDARY and not down and w._recipe_data then
+                            self._on_right_click(w._recipe_data.prefab)
+                            return true
+                        end
+                        return base_on_control(self_btn, control, down)
+                    end
+                end
                 w:SetPosition(0, LIST_TOP - (i - 1) * ROW_HEIGHT)
                 list_root:AddChild(w)
                 table.insert(widgets, w)
