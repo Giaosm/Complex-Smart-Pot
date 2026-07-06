@@ -19,6 +19,8 @@ local cooking = require("cooking")
 local Scanner = require("inventory_scanner")
 
 local AutoCook = nil
+local GetStackSize = require("utils/getstacksize")
+
 local function GetAutoCook()
     if not AutoCook then
         AutoCook = require("auto_cook")
@@ -64,7 +66,7 @@ local SORT_STATE_NONE = 0
 local SORT_STATE_DESC = 1
 local SORT_STATE_ASC  = 2
 
-local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst, backpack_check_mode, auto_cook_source, range_init, prefs)
+local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst, backpack_check_mode, auto_cook_source, range_init, prefs, select_mode)
     Widget._ctor(self, "RecipePanel")
 
     self.data = cookbook_data
@@ -75,6 +77,7 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
     self._auto_cook_source = auto_cook_source or "off"
     self._enable_auto_cook = self._auto_cook_source ~= "off"
     self._prefs = prefs or {}
+    self._select_mode = select_mode or "click"
 
     self._cooker = nil
     self._cooker_recipes = nil
@@ -335,25 +338,52 @@ function RecipePanel:MakeScrollList()
                 hover.move_on_click = false
                 hover.image:ScaleToSize(SLOT_SIZE + 8, SLOT_SIZE + 8)
                 hover.image:SetTint(0, 0, 0, 0)
-                hover:SetOnClick(function()
-                    if w._recipe_data then
-                        if self._active_popup_data and self._active_popup_data.prefab == w._recipe_data.prefab then
-                            self._recipe_popup:Hide()
-                            self._active_popup_data = nil
-                            if self._on_dish_click then
-                                self._on_dish_click(nil)
-                            end
-                        else
-                            self._active_popup_data = w._recipe_data
-                            self._recipe_popup:SetPosition(320, 0)
-                            self._recipe_popup:ShowForRecipe(w._recipe_data, self._S, self._T)
-                            if self._enable_auto_cook and self._on_dish_click then
-                                self._on_dish_click(w._recipe_data.prefab)
-                                self.scroll_list:RefreshView()
+                if self._select_mode == "hover" then
+                    hover:SetOnGainFocus(function()
+                        if w._recipe_data then
+                            if not (self._active_popup_data and self._active_popup_data.prefab == w._recipe_data.prefab) then
+                                self._active_popup_data = w._recipe_data
+                                self._recipe_popup:SetPosition(320, 0)
+                                self._recipe_popup:ShowForRecipe(w._recipe_data, self._S, self._T)
+                                if self._enable_auto_cook and self._on_dish_click then
+                                    self._on_dish_click(w._recipe_data.prefab)
+                                    self.scroll_list:RefreshView()
+                                end
                             end
                         end
-                    end
-                end)
+                    end)
+                    hover:SetOnClick(function()
+                        if w._recipe_data then
+                            if self._active_popup_data and self._active_popup_data.prefab == w._recipe_data.prefab then
+                                self._recipe_popup:Hide()
+                                self._active_popup_data = nil
+                                if self._on_dish_click then
+                                    self._on_dish_click(nil)
+                                end
+                            end
+                        end
+                    end)
+                else
+                    hover:SetOnClick(function()
+                        if w._recipe_data then
+                            if self._active_popup_data and self._active_popup_data.prefab == w._recipe_data.prefab then
+                                self._recipe_popup:Hide()
+                                self._active_popup_data = nil
+                                if self._on_dish_click then
+                                    self._on_dish_click(nil)
+                                end
+                            else
+                                self._active_popup_data = w._recipe_data
+                                self._recipe_popup:SetPosition(320, 0)
+                                self._recipe_popup:ShowForRecipe(w._recipe_data, self._S, self._T)
+                                if self._enable_auto_cook and self._on_dish_click then
+                                    self._on_dish_click(w._recipe_data.prefab)
+                                    self.scroll_list:RefreshView()
+                                end
+                            end
+                        end
+                    end)
+                end
                 if self._on_right_click then
                     local base_on_control = hover.OnControl
                     hover.OnControl = function(self_btn, control, down)
@@ -662,10 +692,7 @@ function RecipePanel:_RefreshBackpackRecipes()
 
     local active_item = inv:GetActiveItem()
     if active_item and active_item.prefab and self._cached_device_ingredients and self._cached_device_ingredients[active_item.prefab] then
-        local count = 1
-        if active_item.replica and active_item.replica.stackable then
-            count = active_item.replica.stackable:StackSize()
-        end
+        local count = GetStackSize(active_item)
         bag_counts[active_item.prefab] = math.min((bag_counts[active_item.prefab] or 0) + count, max_per_type)
     end
 

@@ -1,5 +1,6 @@
 -- 食材扫描：从物品栏/背包/容器中统计可烹饪食材数量
 local cooking = require("cooking")
+local GetStackSize = require("utils/getstacksize")
 
 local Scanner = {}
 
@@ -10,12 +11,7 @@ function Scanner.CountIngredients(items, max_per_type, device_ingredients, bag_c
 
     for _, item in pairs(items) do
         if item and item.prefab and device_ingredients[item.prefab] then
-            local count = 1
-            if item.replica and item.replica.stackable then
-                count = item.replica.stackable:StackSize()
-            elseif item.components and item.components.stackable then
-                count = item.components.stackable:StackSize()
-            end
+            local count = GetStackSize(item)
             bag_counts[item.prefab] = math.min((bag_counts[item.prefab] or 0) + count, max_per_type)
         end
     end

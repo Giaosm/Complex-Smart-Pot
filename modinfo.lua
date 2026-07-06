@@ -89,6 +89,17 @@ configuration_options = {
         },
         default = "off",
     },
+    {
+        name = "recipe_select_behavior",
+        label = isCh and "料理选中方式" or "Recipe Select",
+        hover = isCh and "点击选中/取消选中，或鼠标悬浮选中+左击取消选中"
+            or "Click to toggle, or hover to select + click to deselect",
+        options = {
+            { description = isCh and "点击选中" or "Click", data = "click" },
+            { description = isCh and "悬浮选中" or "Hover", data = "hover" },
+        },
+        default = "click",
+    },
     Subtitle("模组兼容", "Compat"),
     {
         name = "enable_hof_compat",

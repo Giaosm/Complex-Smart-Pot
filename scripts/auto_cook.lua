@@ -233,15 +233,7 @@ local function OpenContainer(target)
     until not (target and target.entity and target:IsValid() and target.Transform and GetMouseActionSoft({"RUMMAGE"}, target))
 end
 
-local function GetStackSize(item)
-    if item and item.replica and item.replica.stackable then
-        return item.replica.stackable:StackSize()
-    end
-    if item and item.components and item.components.stackable then
-        return item.components.stackable:StackSize()
-    end
-    return 1
-end
+local GetStackSize = require("utils/getstacksize")
 
 local function _ShouldScanContainer(container_inst, source)
     if source == "inv" then return false end

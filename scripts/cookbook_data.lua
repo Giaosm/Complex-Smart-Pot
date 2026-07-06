@@ -44,6 +44,77 @@ local function _ResolveFoodIcon(prefab, cookbook_tex, cookbook_atlas)
            cookbook_atlas or "images/inventoryimages/" .. prefab .. ".xml"
 end
 
+local function _BuildRecipeItem(prefab, recipe_def, category, extra)
+    extra = extra or {}
+    local name_key = string.upper(prefab)
+    local name = STRINGS.NAMES[name_key]
+    if name == nil or name == "" then
+        name = prefab
+    end
+
+    local atlas_override = extra.atlas_override
+    local food_tex, food_atlas = _ResolveFoodIcon(
+        prefab,
+        recipe_def.cookbook_tex,
+        atlas_override or recipe_def.cookbook_atlas
+    )
+
+    local rd = recipe_def
+    local has_buff = extra.has_buff
+    if has_buff == nil then
+        has_buff = (rd.temperature ~= nil and rd.temperature ~= 0)
+            or rd.oneatenfn ~= nil
+            or (rd.chargevalue ~= nil and rd.chargevalue ~= 0)
+    end
+
+    local item = {
+        prefab      = prefab,
+        name        = name,
+        category    = category,
+        recipe_def  = recipe_def,
+        food_atlas  = food_atlas,
+        food_tex    = food_tex,
+        health      = recipe_def.health or 0,
+        hunger      = recipe_def.hunger or 0,
+        sanity      = recipe_def.sanity or 0,
+        has_buff    = has_buff,
+        defaultsorthash = hash(prefab),
+        recipe_requirements = extra.recipe_requirements,
+    }
+
+    if extra.is_vanilla ~= nil then item.is_vanilla = extra.is_vanilla end
+    if extra.is_brewer then item.is_brewer = true end
+    if extra.is_myth then item.is_myth = true end
+
+    return item
+end
+
+local function _ComputeMaxTagValues(ingredients)
+    local max_vals = {}
+    for name, data in pairs(ingredients) do
+        if data.tags then
+            for tag, val in pairs(data.tags) do
+                local cur = max_vals[tag] or 0
+                if val > cur then
+                    max_vals[tag] = val
+                end
+            end
+        end
+    end
+    return max_vals
+end
+
+local function _BuildMythRequirements(prefab, myth_recipes)
+    if not myth_recipes or not myth_recipes[prefab] or not myth_recipes[prefab].recipe then
+        return nil
+    end
+    local minnames = {}
+    for ingredient, count in pairs(myth_recipes[prefab].recipe) do
+        minnames[ingredient] = count
+    end
+    return { minnames = minnames, mintags = {}, maxtags = {} }
+end
+
 local function _by_hash(a, b)
     return a.defaultsorthash < b.defaultsorthash
 end
@@ -59,43 +130,18 @@ function CookbookData:Collect()
         return self
     end
 
+    local seen = {}
     for category, recipes in pairs(cookbook_recipes) do
         if self.categories[category] == nil then
             self.categories[category] = {}
         end
 
         for prefab, recipe_def in pairs(recipes) do
-            if not recipe_def.no_cookbook then
-                local name_key = string.upper(prefab)
-                local name = STRINGS.NAMES[name_key]
-                if name == nil or name == "" then
-                    name = prefab
-                end
-
-                local food_tex, food_atlas = _ResolveFoodIcon(
-                    prefab, recipe_def.cookbook_tex, recipe_def.cookbook_atlas
-                )
-
-                local rd = recipe_def
-                local has_buff = (rd.temperature ~= nil and rd.temperature ~= 0)
-                    or rd.oneatenfn ~= nil
-                    or (rd.chargevalue ~= nil and rd.chargevalue ~= 0)
-
-                local item = {
-                    prefab      = prefab,
-                    name        = name,
-                    category    = category,
-                    recipe_def  = recipe_def,
-                    food_atlas  = food_atlas,
-                    food_tex    = food_tex,
-                    health      = recipe_def.health or 0,
-                    hunger      = recipe_def.hunger or 0,
-                    sanity      = recipe_def.sanity or 0,
-                    has_buff    = has_buff,
-                    is_vanilla  = _vanilla_recipes[prefab] or false,
-                    defaultsorthash = hash(prefab),
-                    recipe_requirements = nil,
-                }
+            if not recipe_def.no_cookbook and not seen[prefab] then
+                seen[prefab] = true
+                local item = _BuildRecipeItem(prefab, recipe_def, category, {
+                    is_vanilla = _vanilla_recipes[prefab] or false,
+                })
 
                 if recipe_def.test ~= nil then
                     item.recipe_requirements = Detector.Detect(
@@ -133,16 +179,11 @@ function CookbookData:_CollectBrewerRecipes()
         return
     end
 
-    self._brewer_max_tag_values = {}
-    for name, data in pairs(brewingredients) do
-        if data.tags then
-            for tag, val in pairs(data.tags) do
-                local cur = self._brewer_max_tag_values[tag] or 0
-                if val > cur then
-                    self._brewer_max_tag_values[tag] = val
-                end
-            end
-        end
+    self._brewer_max_tag_values = _ComputeMaxTagValues(brewingredients)
+
+    local existing = {}
+    for _, item in ipairs(self.all) do
+        existing[item.prefab] = true
     end
 
     for category, recipes in pairs(hof_brewing.brewbook_recipes) do
@@ -151,38 +192,12 @@ function CookbookData:_CollectBrewerRecipes()
         end
 
         for prefab, recipe_def in pairs(recipes) do
-            if not recipe_def.no_brewbook then
-                local name_key = string.upper(prefab)
-                local name = STRINGS.NAMES[name_key]
-                if name == nil or name == "" then
-                    name = prefab
-                end
-
-                local food_tex, food_atlas = _ResolveFoodIcon(
-                    prefab, recipe_def.cookbook_tex,
-                    recipe_def.cookbook_atlas or recipe_def.brewbook_atlas
-                )
-
-                local rd = recipe_def
-                local has_buff = (rd.temperature ~= nil and rd.temperature ~= 0)
-                    or rd.oneatenfn ~= nil
-                    or (rd.chargevalue ~= nil and rd.chargevalue ~= 0)
-
-                local item = {
-                    prefab      = prefab,
-                    name        = name,
-                    category    = category,
-                    recipe_def  = recipe_def,
-                    food_atlas  = food_atlas,
-                    food_tex    = food_tex,
-                    health      = recipe_def.health or 0,
-                    hunger      = recipe_def.hunger or 0,
-                    sanity      = recipe_def.sanity or 0,
-                    has_buff    = has_buff,
-                    defaultsorthash = hash(prefab),
-                    recipe_requirements = nil,
-                    is_brewer   = true,
-                }
+            if not recipe_def.no_brewbook and not existing[prefab] then
+                existing[prefab] = true
+                local item = _BuildRecipeItem(prefab, recipe_def, category, {
+                    atlas_override = recipe_def.brewbook_atlas,
+                    is_brewer = true,
+                })
 
                 if recipe_def.test ~= nil then
                     item.recipe_requirements = Detector.Detect(
@@ -221,16 +236,8 @@ function CookbookData:_CollectMythRecipes()
 
     if myth_recipes then
         for _, item in ipairs(self.all) do
-            if item.recipe_requirements == nil and myth_recipes[item.prefab] and myth_recipes[item.prefab].recipe then
-                local minnames = {}
-                for ingredient, count in pairs(myth_recipes[item.prefab].recipe) do
-                    minnames[ingredient] = count
-                end
-                item.recipe_requirements = {
-                    minnames = minnames,
-                    mintags = {},
-                    maxtags = {},
-                }
+            if item.recipe_requirements == nil then
+                item.recipe_requirements = _BuildMythRequirements(item.prefab, myth_recipes)
             end
         end
     end
@@ -240,46 +247,12 @@ function CookbookData:_CollectMythRecipes()
         for prefab, recipe_def in pairs(source_table) do
             if not existing[prefab] then
                 existing[prefab] = true
-
-                local name_key = string.upper(prefab)
-                local name = STRINGS.NAMES[name_key]
-                if name == nil or name == "" then
-                    name = prefab
-                end
-
-                local food_tex, food_atlas = _ResolveFoodIcon(
-                    prefab, recipe_def.cookbook_tex, recipe_def.cookbook_atlas
-                )
-
-                local recipe_requirements = nil
-                if myth_recipes and myth_recipes[prefab] and myth_recipes[prefab].recipe then
-                    local minnames = {}
-                    for ingredient, count in pairs(myth_recipes[prefab].recipe) do
-                        minnames[ingredient] = count
-                    end
-                    recipe_requirements = {
-                        minnames = minnames,
-                        mintags = {},
-                        maxtags = {},
-                    }
-                end
-
-                local item = {
-                    prefab      = prefab,
-                    name        = name,
-                    category    = "alchmy_fur",
-                    recipe_def  = recipe_def,
-                    food_atlas  = food_atlas,
-                    food_tex    = food_tex,
-                    health      = recipe_def.health or 0,
-                    hunger      = recipe_def.hunger or 0,
-                    sanity      = recipe_def.sanity or 0,
-                    has_buff    = true,
-                    is_vanilla  = false,
-                    defaultsorthash = hash(prefab),
-                    recipe_requirements = recipe_requirements,
-                    is_myth     = true,
-                }
+                local item = _BuildRecipeItem(prefab, recipe_def, "alchmy_fur", {
+                    has_buff = true,
+                    is_vanilla = false,
+                    is_myth = true,
+                    recipe_requirements = _BuildMythRequirements(prefab, myth_recipes),
+                })
 
                 table.insert(self.categories["alchmy_fur"], item)
                 table.insert(self.categories["mod"], item)
@@ -292,19 +265,7 @@ function CookbookData:_CollectMythRecipes()
 end
 
 function CookbookData:PrecomputeMaxTagValues()
-    local max_vals = {}
-    local ingredients = cooking.ingredients
-    for name, data in pairs(ingredients) do
-        if data.tags then
-            for tag, val in pairs(data.tags) do
-                local cur = max_vals[tag] or 0
-                if val > cur then
-                    max_vals[tag] = val
-                end
-            end
-        end
-    end
-    self._max_tag_values = max_vals
+    self._max_tag_values = _ComputeMaxTagValues(cooking.ingredients)
 end
 
 local function _BuildNamesTags(prefab_list, ingredients)
