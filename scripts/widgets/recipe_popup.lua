@@ -10,6 +10,24 @@ local ResolveFoodTagAssets = require "utils/resolvefoodtagassets"
 
 local POPUP_W = 200
 local POPUP_H = 260
+local BUFF_MAX_W = POPUP_W - 20
+local MARQUEE_INTERVAL = 0.2
+local REQ_VIEW_H = 75
+local REQ_VIEW_W = 187
+local REQ_VIEW_PAD = 16
+local REQ_VIEW_PAD_X = 8.5
+local SCROLL_STEP = 36
+
+local GEQ = "\226\137\165"
+local LEQ = "\226\137\164"
+
+local function _makeLine(parent, x, y, w, h, r, g, b, a)
+    local line = parent:AddChild(Image("images/global.xml", "square.tex"))
+    line:ScaleToSize(w, h)
+    line:SetPosition(x, y)
+    line:SetTint(r, g, b, a)
+    return line
+end
 
 local RecipePopup = Class(Widget, function(self)
     Widget._ctor(self, "RecipePopup")
@@ -36,7 +54,9 @@ local RecipePopup = Class(Widget, function(self)
     self.buff_text = self:AddChild(Text(BODYTEXTFONT, 18))
     self.buff_text:SetPosition(0, POPUP_H / 2 - 85)
     self.buff_text:SetColour(0.6, 1, 0.6, 1)
-    self.buff_text:SetRegionSize(POPUP_W - 20, 22)
+    self.buff_text:SetRegionSize(BUFF_MAX_W, 22)
+    self._buff_scroll = nil
+    self._marquee_task = nil
 
     local label_w = 68
     local sep_gap = 6
@@ -58,19 +78,8 @@ local RecipePopup = Class(Widget, function(self)
     self.min_label:SetColour(0.7, 0.7, 0.7, 1)
     self.min_label:SetString(STRINGS.CSP.POPUP_MIN_REQ)
 
-    self.req_min_root = self:AddChild(Widget("req_min_root"))
-    self.req_min_root:SetPosition(-POPUP_W / 2 + 15, POPUP_H / 2 - 118)
-    self._min_pool = {}
-    for i = 1, 14 do
-        table.insert(self._min_pool, self:_CreatePoolSlot(self.req_min_root))
-    end
-
-    self.req_max_root = self:AddChild(Widget("req_max_root"))
-    self.req_max_root:SetPosition(-POPUP_W / 2 + 15, POPUP_H / 2 - 198)
-    self._max_pool = {}
-    for i = 1, 14 do
-        table.insert(self._max_pool, self:_CreatePoolSlot(self.req_max_root))
-    end
+    self._min_section = self:_CreateReqSection("min", POPUP_H / 2 - 118)
+    self._max_section = self:_CreateReqSection("max", POPUP_H / 2 - 198)
     local sep2_y = POPUP_H / 2 - 180
 
     self.sep2_left = self:AddChild(Image("images/global.xml", "square.tex"))
@@ -110,7 +119,7 @@ function RecipePopup:_CreatePoolSlot(parent)
     return slot
 end
 
-function RecipePopup:_UpdateReqSection(pool, reqs)
+function RecipePopup:_UpdateReqSection(pool, content, reqs)
     local icon_size = 24
     local spacing   = 26
     local max_per_row = 7
@@ -135,6 +144,8 @@ function RecipePopup:_UpdateReqSection(pool, reqs)
             cur_col = cur_col + need
         end
     end
+
+    local total_rows = cur_row + 1
 
     local entries = {}
     for _, item in ipairs(layout) do
@@ -179,11 +190,12 @@ function RecipePopup:_UpdateReqSection(pool, reqs)
         end
     end
 
-    local used = 0
-    for _, entry in ipairs(entries) do
-        used = used + 1
-        if used > #pool then break end
-        local slot = pool[used]
+    while #pool < #entries do
+        table.insert(pool, self:_CreatePoolSlot(content))
+    end
+
+    for i, entry in ipairs(entries) do
+        local slot = pool[i]
         slot:Show()
         slot:SetPosition(entry.x, entry.y)
 
@@ -208,19 +220,83 @@ function RecipePopup:_UpdateReqSection(pool, reqs)
                 if not ok then
                     slot.img:SetTexture("images/food_tags.xml", "unknown.tex")
                 end
-                slot.img:ScaleToSize(icon_size, icon_size)
                 slot.img:SetTooltip(entry.tooltip)
             else
                 slot.img:SetTexture("images/food_tags.xml", "unknown.tex")
-                slot.img:ScaleToSize(icon_size, icon_size)
             end
+            slot.img:ScaleToSize(icon_size, icon_size)
             slot.txt:SetString(entry.display_amt or "")
         end
     end
-    for i = used + 1, #pool do
+    for i = #entries + 1, #pool do
         pool[i]:Hide()
     end
+    return total_rows
 end
+
+function RecipePopup:_CreateReqSection(name, y_offset)
+    local root = self:AddChild(Widget("req_" .. name .. "_root"))
+    local root_x = -POPUP_W / 2 + 15
+    root:SetPosition(root_x, y_offset)
+    root:SetScissor(-REQ_VIEW_PAD_X, -(REQ_VIEW_H - REQ_VIEW_PAD), REQ_VIEW_W, REQ_VIEW_H)
+
+    local content = root:AddChild(Widget(name .. "_content"))
+    self:_AddViewportBorder(root, -REQ_VIEW_PAD_X + 1, -(REQ_VIEW_H - REQ_VIEW_PAD) + 1, REQ_VIEW_W - 2, REQ_VIEW_H - 2)
+
+    local scrollbar = self:_MakeScrollbar(name .. "_scrollbar")
+    scrollbar:SetPosition(root_x + REQ_VIEW_W - REQ_VIEW_PAD_X + 3, y_offset - REQ_VIEW_H / 2 + REQ_VIEW_PAD)
+    self:AddChild(scrollbar)
+
+    return { root = root, content = content, pool = {}, scroll = 0, max_rows = 0, scrollbar = scrollbar }
+end
+
+function RecipePopup:_MakeScrollbar(name)
+    local w = Widget(name)
+    local bar_h = REQ_VIEW_H
+    local bar = w:AddChild(Image("images/quagmire_recipebook.xml", "quagmire_recipe_scroll_bar.tex"))
+    bar:ScaleToSize(2, bar_h)
+    local handle = w:AddChild(Image("images/quagmire_recipebook.xml", "quagmire_recipe_scroll_handle.tex"))
+    handle:ScaleToSize(6, 8)
+    w._handle = handle
+    w._bar_h = bar_h
+    w:Hide()
+    return w
+end
+
+function RecipePopup:_AddViewportBorder(parent, x, y, w, h)
+    if not _G.CSP_SHOW_VIEWPORT_BORDER then return end
+    local border = parent:AddChild(Widget("viewport_border"))
+    border:MoveToFront()
+    _makeLine(border, x + w / 2, y + h, w, 1, 0.5, 0.4, 0.3, 0.5)
+    _makeLine(border, x + w / 2, y, w, 1, 0.5, 0.4, 0.3, 0.5)
+    _makeLine(border, x, y + h / 2, 1, h, 0.5, 0.4, 0.3, 0.5)
+    _makeLine(border, x + w, y + h / 2, 1, h, 0.5, 0.4, 0.3, 0.5)
+end
+
+function RecipePopup:_UpdateScrollbar(scrollbar, scroll, content_rows)
+    if content_rows <= 2 then
+        scrollbar:Hide()
+        return
+    end
+    scrollbar:Show()
+    local bar_h = scrollbar._bar_h
+    local total = math.max(1, (content_rows - 2) * SCROLL_STEP)
+    local handle_h = 8
+    scrollbar._handle:ScaleToSize(6, handle_h)
+    local max_y = bar_h / 2 - handle_h / 2
+    local ratio = total > 0 and math.min(scroll, total) / total or 0
+    scrollbar._handle:SetPosition(0, max_y - ratio * (bar_h - handle_h))
+end
+
+function RecipePopup:_ApplyScroll(section)
+    local max_rows = section.max_rows
+    local max_scroll = math.max(0, (max_rows - 2) * SCROLL_STEP)
+    section.scroll = math.clamp(section.scroll, 0, max_scroll)
+    section.content:SetPosition(0, section.scroll)
+    self:_UpdateScrollbar(section.scrollbar, section.scroll, max_rows)
+end
+
+local function _round1(v) return math.floor((v or 0) * 10 + 0.5) / 10 end
 
 function RecipePopup:ShowForRecipe(data, S, T)
     if data == nil then
@@ -231,7 +307,7 @@ function RecipePopup:ShowForRecipe(data, S, T)
     self.name_text:SetString(data.name)
 
     local stats = string.format(STRINGS.CSP.POPUP_STATS_FMT,
-        data.health or 0, data.hunger or 0, data.sanity or 0)
+        _round1(data.health), _round1(data.hunger), _round1(data.sanity))
     self.stats_text:SetString(stats)
 
     local rd = data.recipe_def
@@ -240,7 +316,7 @@ function RecipePopup:ShowForRecipe(data, S, T)
     table.insert(info, food_type_str)
     if rd.perishtime ~= nil then
         if type(rd.perishtime) == "number" then
-            table.insert(info, string.format(STRINGS.CSP.POPUP_SPOIL_FMT, rd.perishtime / 480))
+            table.insert(info, string.format(STRINGS.CSP.POPUP_SPOIL_FMT, _round1(rd.perishtime / 480)))
         else
             table.insert(info, tostring(rd.perishtime))
         end
@@ -263,10 +339,33 @@ function RecipePopup:ShowForRecipe(data, S, T)
         end
     end
     if buff then
-        self.buff_text:SetString(STRINGS.CSP.POPUP_SPECIAL .. buff)
+        local full = STRINGS.CSP.POPUP_SPECIAL .. buff:gsub("\n", "")
+        self.buff_text:SetString(full)
+        self.buff_text:ResetRegionSize()
+        local tw = self.buff_text:GetRegionSize()
+        self.buff_text:SetRegionSize(BUFF_MAX_W, 22)
+        if tw > BUFF_MAX_W then
+            local padded = full .. "    "
+            self._buff_scroll = padded .. padded
+            self._buff_scroll_pos = 1
+            local cycle = string.utf8len(padded)
+            if not self._marquee_task then
+                self._marquee_task = self.inst:DoPeriodicTask(MARQUEE_INTERVAL, function()
+                    if not self._buff_scroll then return end
+                    self._buff_scroll_pos = self._buff_scroll_pos + 1
+                    if self._buff_scroll_pos > cycle then
+                        self._buff_scroll_pos = 1
+                    end
+                    self.buff_text:SetString(self._buff_scroll:utf8sub(self._buff_scroll_pos))
+                end)
+            end
+        else
+            self:_StopMarquee()
+        end
         self.buff_text:Show()
     else
         self.buff_text:Hide()
+        self:_StopMarquee()
     end
 
     local min_reqs = {}
@@ -286,7 +385,7 @@ function RecipePopup:ShowForRecipe(data, S, T)
                     type = "group",
                     members = members,
                     amount = group.amount,
-                    display_amount = "\226\137\165" .. group.amount,
+                    display_amount = GEQ .. group.amount,
                 })
             end
         end
@@ -298,14 +397,14 @@ function RecipePopup:ShowForRecipe(data, S, T)
                     key = name,
                     is_tag = false,
                     amount = amt,
-                    display_amount = "\226\137\165" .. amt,
+                    display_amount = GEQ .. amt,
                 })
             end
         end
 
         if reqs.mintag_display then
             for tag, info_d in pairs(reqs.mintag_display) do
-                local op = info_d.mode == ">" and ">" or "\226\137\165"
+                local op = info_d.mode == ">" and ">" or GEQ
                 table.insert(min_reqs, {
                     type = "tag",
                     key = tag,
@@ -321,7 +420,7 @@ function RecipePopup:ShowForRecipe(data, S, T)
                     key = tag,
                     is_tag = true,
                     amount = amt,
-                    display_amount = "\226\137\165" .. amt,
+                    display_amount = GEQ .. amt,
                 })
             end
         end
@@ -346,7 +445,7 @@ function RecipePopup:ShowForRecipe(data, S, T)
                         type = "group",
                         members = members,
                         amount = group_max,
-                        display_amount = (group_max == 0) and "=0" or ("\226\137\164" .. group_max),
+                        display_amount = (group_max == 0) and "=0" or (LEQ .. group_max),
                     })
                 end
             end
@@ -359,7 +458,7 @@ function RecipePopup:ShowForRecipe(data, S, T)
                     key = name,
                     is_tag = false,
                     amount = amt,
-                    display_amount = (amt == 0) and "=0" or ("\226\137\164" .. amt),
+                    display_amount = (amt == 0) and "=0" or (LEQ .. amt),
                 })
             end
         end
@@ -372,7 +471,7 @@ function RecipePopup:ShowForRecipe(data, S, T)
                 elseif info_d.mode == "<" then
                     display = "<" .. info_d.value
                 else
-                    display = "\226\137\164" .. info_d.value
+                    display = LEQ .. info_d.value
                 end
                 table.insert(max_reqs, {
                     type = "tag",
@@ -384,7 +483,7 @@ function RecipePopup:ShowForRecipe(data, S, T)
             end
         else
             for tag, amt in pairs(reqs.maxtags or {}) do
-                local display = (amt == 0) and "=0" or ("\226\137\164" .. amt)
+                local display = (amt == 0) and "=0" or (LEQ .. amt)
                 table.insert(max_reqs, {
                     type = "tag",
                     key = tag,
@@ -396,10 +495,43 @@ function RecipePopup:ShowForRecipe(data, S, T)
         end
     end
 
-    self:_UpdateReqSection(self._min_pool, min_reqs)
-    self:_UpdateReqSection(self._max_pool, max_reqs)
+    self._min_section.max_rows = self:_UpdateReqSection(self._min_section.pool, self._min_section.content, min_reqs)
+    self._max_section.max_rows = self:_UpdateReqSection(self._max_section.pool, self._max_section.content, max_reqs)
+    self._min_section.scroll = 0
+    self._max_section.scroll = 0
+    self:_ApplyScroll(self._min_section)
+    self:_ApplyScroll(self._max_section)
 
     self:Show()
+end
+
+function RecipePopup:OnHide()
+    self:_StopMarquee()
+end
+
+function RecipePopup:_StopMarquee()
+    self._buff_scroll = nil
+    if self._marquee_task then
+        self._marquee_task:Cancel()
+        self._marquee_task = nil
+    end
+end
+
+function RecipePopup:OnControl(control, down)
+    if RecipePopup._base.OnControl(self, control, down) then return true end
+    if not down then return false end
+    if control ~= CONTROL_SCROLLBACK and control ~= CONTROL_SCROLLFWD then return false end
+
+    local mouse = TheInput:GetScreenPosition()
+    local px, py = self:GetWorldPosition():Get()
+    local s = self:GetScale()
+    local ly = (mouse.y - py) / s.y
+
+    local delta = control == CONTROL_SCROLLFWD and SCROLL_STEP or -SCROLL_STEP
+    local section = ly >= -49 and self._min_section or self._max_section
+    section.scroll = section.scroll + delta
+    self:_ApplyScroll(section)
+    return true
 end
 
 return RecipePopup

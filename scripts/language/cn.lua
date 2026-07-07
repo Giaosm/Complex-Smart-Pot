@@ -23,7 +23,7 @@ STRINGS.CSP.BTN_AUTO_COOKING   = "自动做饭中..."
 STRINGS.CSP.POPUP_MIN_REQ      = "最低需求"
 STRINGS.CSP.POPUP_MAX_REQ      = "最高限制"
 STRINGS.CSP.POPUP_STATS_FMT    = "生命%+g | 饱食%+g | 理智%+g"
-STRINGS.CSP.POPUP_SPOIL_FMT    = "腐烂%.1f天"
+STRINGS.CSP.POPUP_SPOIL_FMT    = "腐烂%g天"
 STRINGS.CSP.POPUP_COOK_FMT     = "烹饪%ds"
 STRINGS.CSP.POPUP_SPECIAL      = "特殊:"
 

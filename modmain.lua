@@ -34,6 +34,8 @@ local RecipePanel  = require("widgets/recipe_panel")
 local g_cookbook_data = CookbookData()
 local enable_hof_compat = GetModConfigData("enable_hof_compat")
 local enable_myth_compat = GetModConfigData("enable_myth_compat")
+local show_viewport_border = GetModConfigData("show_viewport_border")
+GLOBAL.CSP_SHOW_VIEWPORT_BORDER = show_viewport_border
 
 AddSimPostInit(function()
     g_cookbook_data:Collect()
