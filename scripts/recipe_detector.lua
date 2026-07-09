@@ -426,6 +426,23 @@ function Detector.Detect(test_func, ingredients)
     if type(test_func) ~= "function" then return nil end
     if not ingredients then return nil end
 
+    -- 临时 patch 环境，防止季节条件的短路导致无法分析配方
+    local old_TheWorld = _G.TheWorld
+    local old_SEASONAL_FOOD
+    if _G.TUNING then
+        old_SEASONAL_FOOD = _G.TUNING.SEASONAL_FOOD
+        _G.TUNING.SEASONAL_FOOD = true
+    end
+    if not _G.TheWorld then
+        _G.TheWorld = { state = {} }
+    elseif not _G.TheWorld.state then
+        _G.TheWorld.state = {}
+    end
+    _G.TheWorld.state.isspring = true
+    _G.TheWorld.state.issummer = true
+    _G.TheWorld.state.isautumn = true
+    _G.TheWorld.state.iswinter = true
+
     local allnames = {}
     local alltags = {}
     for name, data in pairs(ingredients) do
@@ -441,13 +458,22 @@ function Detector.Detect(test_func, ingredients)
 
     local simple, an, at, raw_names, raw_tags, np, tp =
         SmartSearch(test_func, allnames, alltags)
+
     if not simple then
+        _G.TheWorld = old_TheWorld
+        if _G.TUNING then
+            _G.TUNING.SEASONAL_FOOD = old_SEASONAL_FOOD
+        end
         return nil
     end
 
     local ok = MinimizeRecipe(test_func, simple, allnames, alltags,
                               raw_names, raw_tags, np, tp)
     if not ok then
+        _G.TheWorld = old_TheWorld
+        if _G.TUNING then
+            _G.TUNING.SEASONAL_FOOD = old_SEASONAL_FOOD
+        end
         return nil
     end
 
@@ -492,6 +518,12 @@ function Detector.Detect(test_func, ingredients)
                 end
             end
         end
+    end
+
+    -- 恢复环境
+    _G.TheWorld = old_TheWorld
+    if _G.TUNING then
+        _G.TUNING.SEASONAL_FOOD = old_SEASONAL_FOOD
     end
 
     return simple

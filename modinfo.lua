@@ -2,7 +2,7 @@
 local isCh = locale and locale:match("^zh")
 
 name = isCh and "复杂智能锅" or "Complex Smart Pot"
-version = "1.1.0"
+version = "1.1.2"
 author = "哇唧唧哇"
 forumthread = ""
 dont_starve_compatible = false
