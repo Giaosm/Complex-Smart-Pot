@@ -159,6 +159,7 @@ function CookbookData:Collect()
 
     self:_CollectBrewerRecipes()
     self:_CollectMythRecipes()
+    self:_CollectXdRecipes()
 
     for _, list in pairs(self.categories) do
         table.sort(list, _by_hash)
@@ -262,6 +263,72 @@ function CookbookData:_CollectMythRecipes()
     end
 
     collect_from(pill_refining)
+end
+
+function CookbookData:_CollectXdRecipes()
+    local xd_pill_recipes = _G.TUNING and _G.TUNING.XD_PILL_RECIPES
+    if not xd_pill_recipes then
+        return
+    end
+
+    local existing = {}
+    for _, item in ipairs(self.all) do
+        existing[item.prefab] = true
+    end
+
+    for device, recipes in pairs(xd_pill_recipes) do
+        if self.categories[device] == nil then
+            self.categories[device] = {}
+        end
+
+        for prefab, data in pairs(recipes) do
+            if not existing[prefab] and data.recipe then
+                existing[prefab] = true
+
+                local minnames = {}
+                for ingredient, count in pairs(data.recipe) do
+                    minnames[ingredient] = count
+                end
+
+                -- 处理替代配方（alternative_recipe = {[1] = {trunk_summer=1, trunk_winter=1}}）
+                local analog_groups = nil
+                if data.alternative_recipe then
+                    analog_groups = {}
+                    for _, alt_group in pairs(data.alternative_recipe) do
+                        local group = { names = {}, amount = 1 }
+                        for ing_name, ing_count in pairs(alt_group) do
+                            table.insert(group.names, ing_name)
+                        end
+                        if #group.names > 0 then
+                            table.insert(analog_groups, group)
+                        end
+                    end
+                    if #analog_groups == 0 then
+                        analog_groups = nil
+                    end
+                end
+
+                local reqs = {
+                    minnames = minnames,
+                    mintags = {},
+                    maxtags = {},
+                }
+                if analog_groups then
+                    reqs.analog_groups = analog_groups
+                end
+
+                local item = _BuildRecipeItem(prefab, {}, device, {
+                    recipe_requirements = reqs,
+                    has_buff = true,
+                    is_vanilla = false,
+                })
+
+                table.insert(self.categories[device], item)
+                table.insert(self.categories["mod"], item)
+                table.insert(self.all, item)
+            end
+        end
+    end
 end
 
 function CookbookData:PrecomputeMaxTagValues()
@@ -516,7 +583,36 @@ function CookbookData:GetPossibleRecipes(prefab_list, ingredients, max_slots, ma
             end
             if ok then
                 -- 检查食材是否满足配方的最低需求，含兄弟食材组的最小数量约束
-                ok = _CheckMinRequirements(reqs, resolved, tags, remaining_slots, max_tag_values, ingredients, max_slots)
+                -- 没有 test 函数的配方（如丹药）minnames 是堆叠数量，按食材种类计槽位
+                -- 已经在锅里的食材只差数量不差槽位，只有尚未放入的食材种类才需要额外槽位
+                if not item.recipe_def.test and reqs.minnames then
+                    local needed_slots = 0
+                    for name, min_amt in pairs(reqs.minnames) do
+                        if (resolved[name] or 0) <= 0 then
+                            needed_slots = needed_slots + 1
+                        end
+                    end
+                    -- 检查替代材料组（analog_groups）是否至少有一种材料
+                    if reqs.analog_groups then
+                        for _, group in ipairs(reqs.analog_groups) do
+                            local has_any = false
+                            for _, gname in ipairs(group.names) do
+                                if (resolved[gname] or 0) > 0 then
+                                    has_any = true
+                                    break
+                                end
+                            end
+                            if not has_any then
+                                needed_slots = needed_slots + 1
+                            end
+                        end
+                    end
+                    if needed_slots > remaining_slots then
+                        ok = false
+                    end
+                else
+                    ok = _CheckMinRequirements(reqs, resolved, tags, remaining_slots, max_tag_values, ingredients, max_slots)
+                end
             end
             if ok then
                 possible[item.prefab] = true
@@ -563,7 +659,7 @@ function CookbookData:GetRecipeMatchScore(reqs, prefab_list, ingredients)
     return score
 end
 
-function CookbookData:GetMatchingRecipes(cooker, prefab_list, ingredients)
+function CookbookData:GetMatchingRecipes(cooker, prefab_list, ingredients, counts)
     if prefab_list == nil or #prefab_list == 0 then
         return nil
     end
@@ -580,9 +676,30 @@ function CookbookData:GetMatchingRecipes(cooker, prefab_list, ingredients)
         elseif item.recipe_requirements and item.recipe_requirements.minnames then
             local ok = true
             for name, count in pairs(item.recipe_requirements.minnames) do
-                if (names[name] or 0) < count then
+                local have = (names[name] or 0)
+                -- 如果 minnames 要求的大于格子数，使用实际堆叠计数
+                if have < count and counts and counts[name] then
+                    have = counts[name]
+                end
+                if have < count then
                     ok = false
                     break
+                end
+            end
+            if ok and item.recipe_requirements.analog_groups then
+                for _, group in ipairs(item.recipe_requirements.analog_groups) do
+                    local group_total = 0
+                    for _, gname in ipairs(group.names) do
+                        local have = (names[gname] or 0)
+                        if have < group.amount and counts and counts[gname] then
+                            have = counts[gname]
+                        end
+                        group_total = group_total + have
+                    end
+                    if group_total < group.amount then
+                        ok = false
+                        break
+                    end
                 end
             end
             if ok then
@@ -594,8 +711,8 @@ function CookbookData:GetMatchingRecipes(cooker, prefab_list, ingredients)
     return next(matching) and matching or nil
 end
 
-function CookbookData:GetMatchingRecipesFromCounts(cooker, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients)
-    return ComboMatcher.Match(cooker, self.all, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, self._ingredient_aliases)
+function CookbookData:GetMatchingRecipesFromCounts(cooker, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, pot_counts)
+    return ComboMatcher.Match(cooker, self.all, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, self._ingredient_aliases, pot_counts)
 end
 
 function CookbookData:GetHighlightedRecipes(matching, cooker_recipes)

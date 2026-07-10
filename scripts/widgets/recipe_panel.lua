@@ -640,6 +640,29 @@ function RecipePanel:SetCooker(cooker_prefab, is_brewer)
                     end
                 end
                 self._cached_device_ingredients = self._myth_ingredients
+            elseif cooker_prefab == "xd_liandanlu" or cooker_prefab == "xd_xcdf" then
+                if next(self._cooker_recipes) == nil and TUNING and TUNING.XD_PILL_RECIPES then
+                    self._cooker_recipes = TUNING.XD_PILL_RECIPES[cooker_prefab] or {}
+                end
+                if self.data and self.data._CollectXdRecipes then
+                    self.data:_CollectXdRecipes()
+                end
+                self._xd_ingredients = {}
+                for _, recipe_def in pairs(self._cooker_recipes) do
+                    if recipe_def.recipe then
+                        for ingredient, _ in pairs(recipe_def.recipe) do
+                            self._xd_ingredients[ingredient] = true
+                        end
+                    end
+                    if recipe_def.alternative_recipe then
+                        for _, alt_group in pairs(recipe_def.alternative_recipe) do
+                            for ingredient, _ in pairs(alt_group) do
+                                self._xd_ingredients[ingredient] = true
+                            end
+                        end
+                    end
+                end
+                self._cached_device_ingredients = self._xd_ingredients
             else
                 self._myth_ingredients = nil
                 self._cached_device_ingredients = {}
@@ -671,19 +694,46 @@ function RecipePanel:_RefreshBackpackRecipes()
     end
 
     local pot_counts = self._cached_pot_counts or {}
-    local pot_count = 0
-    for _, c in pairs(pot_counts) do
-        pot_count = pot_count + c
+    local occupied_slots = 0
+    for _ in pairs(self._slot_data) do
+        occupied_slots = occupied_slots + 1
     end
 
-    if pot_count >= self._max_slots then
+    if occupied_slots >= self._max_slots then
         self._backpack_recipes = self.data:GetHighlightedRecipes(self._matching_recipes, self._cooker_recipes)
         self._cached_bag_counts = {}
         self._backpack_dirty = false
         return
     end
 
-    local max_per_type = self._max_slots - pot_count
+    local max_per_type
+    if self._xd_ingredients and self._cooker_recipes then
+        -- 炼丹炉的配方需要大量堆叠（如 xd_lingshi1×30），从配方中动态算出最大需求量
+        local max_needed = 0
+        for _, recipe_def in pairs(self._cooker_recipes) do
+            if recipe_def.recipe then
+                for _, count in pairs(recipe_def.recipe) do
+                    max_needed = math.max(max_needed, count)
+                end
+            end
+            if recipe_def.alternative_recipe then
+                for _, alt_group in pairs(recipe_def.alternative_recipe) do
+                    for _, count in pairs(alt_group) do
+                        max_needed = math.max(max_needed, count)
+                    end
+                end
+            end
+        end
+        max_per_type = math.max(max_needed, self._max_slots - occupied_slots)
+    else
+        max_per_type = self._max_slots - occupied_slots
+    end
+
+    local pot_counts = self._cached_pot_counts or {}
+    local fixed_counts = {}
+    for _, prefab in pairs(self._slot_data) do
+        fixed_counts[prefab] = (fixed_counts[prefab] or 0) + 1
+    end
 
     local bag_counts = {}
     if self._backpack_check_mode ~= "fridge" then
@@ -746,7 +796,19 @@ function RecipePanel:_RefreshBackpackRecipes()
 	    self._cached_bag_counts[k] = math.min(v, max_per_type)
 	end
 
-	self._backpack_recipes = self.data:GetMatchingRecipesFromCounts(self._cooker, bag_counts, pot_counts, self._cooker_recipes, self._max_slots, self._brewing_ingredients)
+	self._backpack_recipes = self.data:GetMatchingRecipesFromCounts(self._cooker, bag_counts, fixed_counts, self._cooker_recipes, self._max_slots, self._brewing_ingredients, pot_counts)
+        -- 可做分类还需检查槽位容量：缺的材料种类数不能超过剩余格子
+        -- 防止丹药类配方 bag_have 补充后数量够但格子不够装的情况
+        if self._backpack_recipes and self._possible_recipes then
+            for prefab, _ in pairs(self._backpack_recipes) do
+                if not self._possible_recipes[prefab] then
+                    self._backpack_recipes[prefab] = nil
+                end
+            end
+            if next(self._backpack_recipes) == nil then
+                self._backpack_recipes = nil
+            end
+        end
     end
     self._backpack_dirty = false
 end
@@ -756,7 +818,7 @@ function RecipePanel:SetPotIngredients(prefab_list, cooker)
     if prefab_list ~= nil and #prefab_list >= 1 then
         if #prefab_list >= self._max_slots then
             self._possible_recipes = nil
-            self._matching_recipes = self.data:GetMatchingRecipes(cooker, prefab_list, self._brewing_ingredients)
+            self._matching_recipes = self.data:GetMatchingRecipes(cooker, prefab_list, self._brewing_ingredients, self._cached_pot_counts)
             self._highlighted_recipes = self.data:GetHighlightedRecipes(self._matching_recipes, self._cooker_recipes)
         else
             self._possible_recipes = self.data:GetPossibleRecipes(
@@ -915,9 +977,13 @@ end
 function RecipePanel:OnSlotChanged()
     local prefabs = {}
     local counts = {}
-    for _, prefab in pairs(self._slot_data) do
+    for slot_idx, prefab in pairs(self._slot_data) do
         table.insert(prefabs, prefab)
-        counts[prefab] = (counts[prefab] or 0) + 1
+        local item = self._container and self._container.replica
+            and self._container.replica.container
+            and self._container.replica.container:GetItemInSlot(slot_idx)
+        local stack_size = item and GetStackSize(item) or 1
+        counts[prefab] = (counts[prefab] or 0) + stack_size
     end
     self._cached_pot_counts = counts
     self._backpack_dirty = true

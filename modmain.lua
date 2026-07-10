@@ -34,6 +34,7 @@ local RecipePanel  = require("widgets/recipe_panel")
 local g_cookbook_data = CookbookData()
 local enable_hof_compat = GetModConfigData("enable_hof_compat")
 local enable_myth_compat = GetModConfigData("enable_myth_compat")
+local enable_xd_compat = GetModConfigData("enable_xd_compat")
 local show_viewport_border = GetModConfigData("show_viewport_border")
 GLOBAL.CSP_SHOW_VIEWPORT_BORDER = show_viewport_border
 
@@ -297,6 +298,8 @@ AddClassPostConstruct("screens/playerhud", function(self)
             CreateRecipePanel(self, container, true)
         elseif ContainerDetector.IsMyth(container, enable_myth_compat) then
             CreateRecipePanel(self, container, false)
+        elseif ContainerDetector.IsXd(container, enable_xd_compat) then
+            CreateRecipePanel(self, container, false)
         else
             BindExtContainer(container)
             NotifyAllPanels()
@@ -305,7 +308,7 @@ AddClassPostConstruct("screens/playerhud", function(self)
 
     local _CloseContainer = self.CloseContainer
     self.CloseContainer = function(self, container, side)
-        if ContainerDetector.IsCookpot(container) or ContainerDetector.IsBrewer(container, enable_hof_compat) or ContainerDetector.IsMyth(container, enable_myth_compat) then
+        if ContainerDetector.IsCookpot(container) or ContainerDetector.IsBrewer(container, enable_hof_compat) or ContainerDetector.IsMyth(container, enable_myth_compat) or ContainerDetector.IsXd(container, enable_xd_compat) then
             DestroyRecipePanel(container)
         else
             UnbindExtContainer(container)

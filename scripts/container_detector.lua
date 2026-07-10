@@ -28,8 +28,16 @@ local function IsMythContainer(container, enable_myth)
     return container.prefab == "alchmy_fur"
 end
 
+local function IsXdContainer(container, enable_xd)
+    if container == nil or not enable_xd then
+        return false
+    end
+    return container.prefab == "xd_liandanlu"
+end
+
 return {
     IsCookpot = IsCookpotContainer,
     IsBrewer = IsBrewerContainer,
     IsMyth = IsMythContainer,
+    IsXd = IsXdContainer,
 }

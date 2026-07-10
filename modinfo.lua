@@ -2,7 +2,7 @@
 local isCh = locale and locale:match("^zh")
 
 name = isCh and "复杂智能锅" or "Complex Smart Pot"
-version = "1.1.2"
+version = "1.1.3"
 author = "哇唧唧哇"
 forumthread = ""
 dont_starve_compatible = false
@@ -117,6 +117,17 @@ configuration_options = {
         label = isCh and "神话书说" or "Myth Words Theme",
         hover = isCh and "开启后，兼容神话书说模组的炼丹炉烹饪设备"
             or "Compatible with Myth Words Theme (Alchemy Furnace)",
+        options = {
+            { description = isCh and "开启" or "On", data = true },
+            { description = isCh and "关闭" or "Off", data = false },
+        },
+        default = false,
+    },
+    {
+        name = "enable_xd_compat",
+        label = isCh and "登仙" or "Deng Xian",
+        hover = isCh and "开启后，兼容登仙模组的炼丹炉烹饪设备"
+            or "Compatible with Deng Xian (Alchemy Furnace)",
         options = {
             { description = isCh and "开启" or "On", data = true },
             { description = isCh and "关闭" or "Off", data = false },

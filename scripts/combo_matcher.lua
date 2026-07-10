@@ -3,11 +3,12 @@ local cooking = require("cooking")
 
 local ComboMatcher = {}
 
-function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases)
+function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts)
     if not bag_counts or next(bag_counts) == nil then
         return nil
     end
     fixed_counts = fixed_counts or {}
+    pot_counts = pot_counts or {}
     max_slots = max_slots or 4
     ingredients = ingredients or cooking.ingredients
     ingredient_aliases = ingredient_aliases or {}
@@ -105,10 +106,33 @@ function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_
                         end
                     elseif item.recipe_requirements and item.recipe_requirements.minnames then
                         matched_ok = true
-                        for name, count in pairs(item.recipe_requirements.minnames) do
-                            if (names[name] or 0) < count then
+                        local reqs = item.recipe_requirements
+                        for name, count in pairs(reqs.minnames) do
+                            local have = names[name] or 0
+                            local bag_have = (bag_counts[name] or 0) + (pot_counts[name] or 0) - (min_counts[name] or 0)
+                            if have < count and have + bag_have >= count then
+                                have = have + bag_have
+                            end
+                            if have < count then
                                 matched_ok = false
                                 break
+                            end
+                        end
+                        if matched_ok and reqs.analog_groups then
+                            for _, group in ipairs(reqs.analog_groups) do
+                                local group_total = 0
+                                local group_extra = 0
+                                for _, gname in ipairs(group.names) do
+                                    group_total = group_total + (names[gname] or 0)
+                                    group_extra = group_extra + (bag_counts[gname] or 0) + (pot_counts[gname] or 0) - (min_counts[gname] or 0)
+                                end
+                                if group_total < group.amount and group_total + group_extra >= group.amount then
+                                    group_total = group_total + group_extra
+                                end
+                                if group_total < group.amount then
+                                    matched_ok = false
+                                    break
+                                end
                             end
                         end
                     end
