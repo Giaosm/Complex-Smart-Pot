@@ -92,6 +92,7 @@ local function ClearAutoCookMemory()
             end
         end
     end
+    print(STRINGS.CSP.MEMORY_CLEARED)
 end
 _G.ClearAutoCookMemory = ClearAutoCookMemory
 
@@ -125,7 +126,7 @@ local function CreateRecipePanel(hud, container, is_brewer)
     panel:SetCooker(container.prefab, is_brewer)
     panel:StartMonitor(container)
 
-    if auto_cook_source ~= "off" then
+    if auto_cook_source ~= "off" and panel._auto_cook then
 	    local recipe_map = memory_data._recipe_memories
         if type(recipe_map) == "table" then
             panel._auto_cook:RestoreRecipeMemories(recipe_map)
