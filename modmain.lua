@@ -37,6 +37,8 @@ local enable_myth_compat = GetModConfigData("enable_myth_compat")
 local enable_xd_compat = GetModConfigData("enable_xd_compat")
 local show_viewport_border = GetModConfigData("show_viewport_border")
 GLOBAL.CSP_SHOW_VIEWPORT_BORDER = show_viewport_border
+local enable_debug_logging = GetModConfigData("enable_debug_logging")
+GLOBAL.CSP_DEBUG_LOGGING = enable_debug_logging
 
 AddSimPostInit(function()
     g_cookbook_data:Collect()
@@ -119,11 +121,13 @@ local function CreateRecipePanel(hud, container, is_brewer)
 	local auto_cook_source = GetModConfigData("enable_auto_cook")
 	local range_init = auto_cook_source ~= "off" and (memory_data._range_search or 30) or nil
 	local select_mode = GetModConfigData("recipe_select_behavior") or "click"
-	local panel = RecipePanel(g_cookbook_data, { strings = STRINGS, tuning = TUNING }, hud.owner, enable_backpack, auto_cook_source, range_init, panel_prefs, select_mode)
+	local debug_logging = GetModConfigData("enable_debug_logging")
+	local panel = RecipePanel(g_cookbook_data, { strings = STRINGS, tuning = TUNING }, hud.owner, enable_backpack, auto_cook_source, range_init, panel_prefs, select_mode, debug_logging)
     parent:AddChild(panel)
     local pos = containerwidget:GetPosition()
     panel:SetPosition(pos.x + 100, pos.y)
     panel:SetCooker(container.prefab, is_brewer)
+    panel:SetAcceptsStacksFromContainer(container)
     panel:StartMonitor(container)
 
     if auto_cook_source ~= "off" and panel._auto_cook then

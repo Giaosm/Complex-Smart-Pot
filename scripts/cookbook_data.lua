@@ -119,6 +119,40 @@ local function _by_hash(a, b)
     return a.defaultsorthash < b.defaultsorthash
 end
 
+local function _BuildRecipeRequirementsIndex(item)
+    local req_types = {}
+    local req_tags = {}
+    local min_total = 0
+
+    local reqs = item.recipe_requirements
+    if reqs then
+        if reqs.minnames then
+            for name, amt in pairs(reqs.minnames) do
+                req_types[name] = true
+                min_total = min_total + amt
+            end
+        end
+        if reqs.analog_groups then
+            for _, group in ipairs(reqs.analog_groups) do
+                local group_amount = group.amount or 1
+                min_total = min_total + group_amount
+                for _, gname in ipairs(group.names) do
+                    req_types[gname] = true
+                end
+            end
+        end
+        if reqs.mintags then
+            for tag, _ in pairs(reqs.mintags) do
+                req_tags[tag] = true
+            end
+        end
+    end
+
+    item._required_types = req_types
+    item._required_tags = req_tags
+    item._min_total = min_total
+end
+
 function CookbookData:Collect()
     self.all = {}
     for cat, _ in pairs(self.categories) do
@@ -148,6 +182,7 @@ function CookbookData:Collect()
                         recipe_def.test, cooking.ingredients
                     )
                 end
+                _BuildRecipeRequirementsIndex(item)
 
                 table.insert(self.categories[category], item)
                 table.insert(self.all, item)
@@ -205,6 +240,7 @@ function CookbookData:_CollectBrewerRecipes()
                         recipe_def.test, brewingredients
                     )
                 end
+                _BuildRecipeRequirementsIndex(item)
 
                 table.insert(self.categories[category], item)
                 table.insert(self.categories["mod"], item)
@@ -239,6 +275,7 @@ function CookbookData:_CollectMythRecipes()
         for _, item in ipairs(self.all) do
             if item.recipe_requirements == nil then
                 item.recipe_requirements = _BuildMythRequirements(item.prefab, myth_recipes)
+                _BuildRecipeRequirementsIndex(item)
             end
         end
     end
@@ -254,6 +291,7 @@ function CookbookData:_CollectMythRecipes()
                     is_myth = true,
                     recipe_requirements = _BuildMythRequirements(prefab, myth_recipes),
                 })
+                _BuildRecipeRequirementsIndex(item)
 
                 table.insert(self.categories["alchmy_fur"], item)
                 table.insert(self.categories["mod"], item)
@@ -322,6 +360,7 @@ function CookbookData:_CollectXdRecipes()
                     has_buff = true,
                     is_vanilla = false,
                 })
+                _BuildRecipeRequirementsIndex(item)
 
                 table.insert(self.categories[device], item)
                 table.insert(self.categories["mod"], item)
@@ -510,7 +549,7 @@ local function _CheckMinRequirements(reqs, resolved, tags, remaining_slots, max_
     return true
 end
 
-function CookbookData:GetPossibleRecipes(prefab_list, ingredients, max_slots, max_tag_values)
+function CookbookData:GetPossibleRecipes(prefab_list, ingredients, max_slots, max_tag_values, counts, use_quantity_matching)
     if prefab_list == nil or #prefab_list == 0 then
         return nil
     end
@@ -518,8 +557,34 @@ function CookbookData:GetPossibleRecipes(prefab_list, ingredients, max_slots, ma
     ingredients = ingredients or cooking.ingredients
     max_slots = max_slots or 4
     max_tag_values = max_tag_values or self._max_tag_values
-    local remaining_slots = max_slots - #prefab_list
+    local remaining_slots
+    if use_quantity_matching then
+        local distinct = 0
+        for _, c in pairs(counts or {}) do
+            if c > 0 then
+                distinct = distinct + 1
+            end
+        end
+        remaining_slots = max_slots - distinct
+    else
+        remaining_slots = max_slots - #prefab_list
+    end
     local names, tags = _BuildNamesTags(prefab_list, ingredients)
+    if counts then
+        for name, count in pairs(counts) do
+            names[name] = count
+        end
+        tags = {}
+        for name, count in pairs(names) do
+            local ing_name = INGREDIENT_ALIASES[name] or name
+            local data = ingredients[ing_name]
+            if data and data.tags then
+                for tag, val in pairs(data.tags) do
+                    tags[tag] = (tags[tag] or 0) + val * count
+                end
+            end
+        end
+    end
 
     local resolved = {}
     for raw, count in pairs(names) do
@@ -711,8 +776,8 @@ function CookbookData:GetMatchingRecipes(cooker, prefab_list, ingredients, count
     return next(matching) and matching or nil
 end
 
-function CookbookData:GetMatchingRecipesFromCounts(cooker, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, pot_counts)
-    return ComboMatcher.Match(cooker, self.all, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, self._ingredient_aliases, pot_counts)
+function CookbookData:GetMatchingRecipesFromCounts(cooker, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, pot_counts, use_quantity_matching)
+    return ComboMatcher.Match(cooker, self.all, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, self._ingredient_aliases, pot_counts, use_quantity_matching)
 end
 
 function CookbookData:GetHighlightedRecipes(matching, cooker_recipes)

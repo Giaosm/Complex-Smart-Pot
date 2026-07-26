@@ -66,7 +66,7 @@ local SORT_STATE_NONE = 0
 local SORT_STATE_DESC = 1
 local SORT_STATE_ASC  = 2
 
-local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst, backpack_check_mode, auto_cook_source, range_init, prefs, select_mode)
+local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst, backpack_check_mode, auto_cook_source, range_init, prefs, select_mode, debug_logging)
     Widget._ctor(self, "RecipePanel")
 
     self.data = cookbook_data
@@ -78,6 +78,7 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
     self._enable_auto_cook = self._auto_cook_source ~= "off"
     self._prefs = prefs or {}
     self._select_mode = select_mode or "click"
+    self._debug_logging = debug_logging == true
 
     self._cooker = nil
     self._cooker_recipes = nil
@@ -85,6 +86,8 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
     self._brewing_ingredients = nil
     self._brewer_recipes = nil
     self._max_slots = 4
+    self._accepts_stacks = false
+    self._use_quantity_matching = false
 
     self._category  = self._prefs.category  or "all"
     if self._category == "craftable" and self._backpack_check_mode == "off" then
@@ -599,13 +602,71 @@ function RecipePanel:ScrollToRecipe(prefab)
     self:RefreshDisplay()
 end
 
+function RecipePanel:SetAcceptsStacksFromContainer(container)
+    if container and container.replica and container.replica.container then
+        local rep = container.replica.container
+
+        -- 动态获取格子数量：优先用 replica 的 GetNumSlots，否则从 widget 推断
+        local num_slots = 4
+        if rep.GetNumSlots then
+            num_slots = rep:GetNumSlots()
+        elseif rep.GetWidget then
+            local widget = rep:GetWidget()
+            if widget then
+                num_slots = widget.numslots or (widget.slotpos and #widget.slotpos) or 4
+            end
+        end
+        self._max_slots = num_slots
+
+        -- 动态获取是否可堆叠
+        if rep.AcceptsStacks then
+            self._accepts_stacks = rep:AcceptsStacks()
+        elseif rep.acceptsstacks ~= nil then
+            self._accepts_stacks = rep.acceptsstacks
+        else
+            self._accepts_stacks = false
+        end
+    else
+        self._accepts_stacks = false
+        self._max_slots = 4
+    end
+
+    -- 判断是否为特殊设备：某个料理配方中单个食材的需求量超过了设备格子数
+    self._use_quantity_matching = false
+    if self._cooker_recipes then
+        for _, recipe_def in pairs(self._cooker_recipes) do
+            if recipe_def.recipe then
+                for _, count in pairs(recipe_def.recipe) do
+                    if count > self._max_slots then
+                        self._use_quantity_matching = true
+                        break
+                    end
+                end
+            end
+            if self._use_quantity_matching then break end
+            if recipe_def.alternative_recipe then
+                for _, alt_group in pairs(recipe_def.alternative_recipe) do
+                    for _, count in pairs(alt_group) do
+                        if count > self._max_slots then
+                            self._use_quantity_matching = true
+                            break
+                        end
+                    end
+                    if self._use_quantity_matching then break end
+                end
+            end
+            if self._use_quantity_matching then break end
+        end
+    end
+end
+
 function RecipePanel:SetCooker(cooker_prefab, is_brewer)
     self._cooker = cooker_prefab
     self._is_brewer = is_brewer == true
     self._cached_bag_counts = nil
 
     if self._is_brewer then
-        self._max_slots = 3
+        self._max_slots = 3 -- 默认值，后续会被 SetAcceptsStacksFromContainer 动态覆盖
         local hof_brewing = _G.package.loaded["hof_brewing"]
         if hof_brewing then
             self._brewing_ingredients = hof_brewing.brewingredients
@@ -619,7 +680,7 @@ function RecipePanel:SetCooker(cooker_prefab, is_brewer)
             self._cached_device_ingredients = nil
         end
     else
-        self._max_slots = 4
+        self._max_slots = 4 -- 默认值，后续会被 SetAcceptsStacksFromContainer 动态覆盖
         self._brewing_ingredients = nil
         self._brewer_recipes = nil
         if cooker_prefab ~= nil then
@@ -707,10 +768,10 @@ function RecipePanel:_RefreshBackpackRecipes()
     end
 
     local max_per_type
-    if self._xd_ingredients and self._cooker_recipes then
-        -- 炼丹炉的配方需要大量堆叠（如 xd_lingshi1×30），从配方中动态算出最大需求量
+    if self._use_quantity_matching then
+        -- 炼丹炉/酿酒桶等特殊设备：单个格子可放大量同种食材，从配方中算出最大需求量
         local max_needed = 0
-        for _, recipe_def in pairs(self._cooker_recipes) do
+        for _, recipe_def in pairs(self._cooker_recipes or {}) do
             if recipe_def.recipe then
                 for _, count in pairs(recipe_def.recipe) do
                     max_needed = math.max(max_needed, count)
@@ -726,6 +787,7 @@ function RecipePanel:_RefreshBackpackRecipes()
         end
         max_per_type = math.max(max_needed, self._max_slots - occupied_slots)
     else
+        -- 普通烹饪设备：每个格子只算 1 份食材，扫描上限 = 剩余槽位数
         max_per_type = self._max_slots - occupied_slots
     end
 
@@ -796,7 +858,22 @@ function RecipePanel:_RefreshBackpackRecipes()
 	    self._cached_bag_counts[k] = math.min(v, max_per_type)
 	end
 
-	self._backpack_recipes = self.data:GetMatchingRecipesFromCounts(self._cooker, bag_counts, fixed_counts, self._cooker_recipes, self._max_slots, self._brewing_ingredients, pot_counts)
+	self._backpack_recipes = self.data:GetMatchingRecipesFromCounts(self._cooker, bag_counts, fixed_counts, self._cooker_recipes, self._max_slots, self._brewing_ingredients, pot_counts, self._use_quantity_matching)
+
+        if self._debug_logging then
+            local dbg_items = {}
+            for k, v in pairs(bag_counts) do table.insert(dbg_items, k .. "=" .. v) end
+            table.sort(dbg_items)
+            print(string.format("[智能锅] slots=%d qmatch=%s mode=%s scan(%d)",
+                self._max_slots, tostring(self._use_quantity_matching), tostring(self._backpack_check_mode), #dbg_items))
+            print("  [" .. table.concat(dbg_items, "、") .. "]")
+            if self._backpack_recipes then
+                local dbg_rec = {}
+                for k, _ in pairs(self._backpack_recipes) do table.insert(dbg_rec, k) end
+                table.sort(dbg_rec)
+                print("[智能锅] 可做料理(" .. #dbg_rec .. "): [" .. table.concat(dbg_rec, "、") .. "]")
+            end
+        end
         -- 可做分类还需检查槽位容量：缺的材料种类数不能超过剩余格子
         -- 防止丹药类配方 bag_have 补充后数量够但格子不够装的情况
         if self._backpack_recipes and self._possible_recipes then
@@ -825,7 +902,9 @@ function RecipePanel:SetPotIngredients(prefab_list, cooker)
                 prefab_list,
                 self._brewing_ingredients,
                 self._max_slots,
-                self._is_brewer and self.data._brewer_max_tag_values or nil
+                self._is_brewer and self.data._brewer_max_tag_values or nil,
+                self._cached_pot_counts,
+                self._use_quantity_matching
             )
             self._matching_recipes = nil
             self._highlighted_recipes = nil

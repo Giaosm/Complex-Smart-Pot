@@ -2,7 +2,7 @@
 local isCh = locale and locale:match("^zh")
 
 name = isCh and "复杂智能锅" or "Complex Smart Pot"
-version = "1.1.4"
+version = "1.1.5"
 author = "哇唧唧哇"
 forumthread = ""
 dont_starve_compatible = false
@@ -139,6 +139,17 @@ configuration_options = {
         name = "show_viewport_border",
         label = isCh and "显示视口边框" or "Show Viewport Border",
         hover = isCh and "在食谱上下限区域显示调试边框" or "Show debug border around recipe requirement area",
+        options = {
+            { description = isCh and "关闭" or "Off", data = false },
+            { description = isCh and "开启" or "On", data = true },
+        },
+        default = false,
+    },
+    {
+        name = "enable_debug_logging",
+        label = isCh and "调试信息输出" or "Debug Logging",
+        hover = isCh and "开启后，在服务器日志中输出食材扫描、料理匹配等调试信息，用于排查问题"
+            or "Output debug info (ingredient scan, recipe matching) to server log for troubleshooting",
         options = {
             { description = isCh and "关闭" or "Off", data = false },
             { description = isCh and "开启" or "On", data = true },
