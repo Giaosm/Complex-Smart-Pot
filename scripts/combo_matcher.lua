@@ -4,6 +4,7 @@ local cooking = require("cooking")
 local ComboMatcher = {}
 
 local _match_cache = {}
+local _cache_keys = {}  -- LRU 顺序，最新的在末尾
 
 local function BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
     local parts = {}
@@ -445,6 +446,17 @@ function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_
     end
 
     _match_cache[cache_key] = result or {}
+    for i, k in ipairs(_cache_keys) do
+        if k == cache_key then
+            table.remove(_cache_keys, i)
+            break
+        end
+    end
+    table.insert(_cache_keys, cache_key)
+    if #_cache_keys > 500 then
+        local old = table.remove(_cache_keys, 1)
+        _match_cache[old] = nil
+    end
     return result
 end
 

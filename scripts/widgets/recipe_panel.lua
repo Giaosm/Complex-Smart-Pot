@@ -10,8 +10,9 @@ local PotPreviewBar  = require("widgets/pot_preview_bar")
 local CRAFTING_ATLAS_RESOLVED = resolvefilepath(CRAFTING_ATLAS)
 
 local function SafeSetTexture(img, atlas, tex)
-    local ok = pcall(img.SetTexture, img, atlas, tex)
-    if not ok then
+    if TheSim:AtlasContains(atlas, tex) then
+        img:SetTexture(atlas, tex)
+    else
         img:SetTexture("images/food_tags.xml", "unknown.tex")
     end
 end
@@ -456,16 +457,12 @@ function RecipePanel:MakeScrollList()
     )
 end
 
-function RecipePanel:RefreshDisplay()
-    if self._backpack_dirty then
-        self:_RefreshBackpackRecipes()
-    end
-
-    local raw
+function RecipePanel:_BuildRawList()
     if self._category == "all" or self._category == "buff" or self._category == "craftable" then
-        raw = self.data.all
-    elseif self._category == "cookpot" then
-        raw = {}
+        return self.data.all
+    end
+    if self._category == "cookpot" then
+        local raw = {}
         local seen = {}
         local function add(cat)
             for _, v in ipairs(self.data.categories[cat] or {}) do
@@ -477,8 +474,10 @@ function RecipePanel:RefreshDisplay()
         end
         add("cookpot")
         add("portablecookpot")
-    elseif self._category == "device" then
-        raw = {}
+        return raw
+    end
+    if self._category == "device" then
+        local raw = {}
         if self._cooker_recipes then
             for _, v in ipairs(self.data.all) do
                 if self._cooker_recipes[v.prefab] then
@@ -486,9 +485,26 @@ function RecipePanel:RefreshDisplay()
                 end
             end
         end
-    else
-        raw = self.data.categories[self._category] or {}
+        return raw
     end
+    return self.data.categories[self._category] or {}
+end
+
+function RecipePanel:RefreshDisplay()
+    if self._backpack_dirty then
+        self:_RefreshBackpackRecipes()
+    end
+
+    -- 缓存 raw 列表，仅在分类或设备变更时重建
+    local cache_key = self._category
+    if self._category == "device" then
+        cache_key = cache_key .. (self._cooker and ("_" .. self._cooker) or "")
+    end
+    if self._cached_raw_key ~= cache_key then
+        self._cached_raw_key = cache_key
+        self._cached_raw = self:_BuildRawList()
+    end
+    local raw = self._cached_raw
 
     local items = {}
     local is_buff = self._category == "buff"
@@ -740,6 +756,7 @@ function RecipePanel:SetCooker(cooker_prefab, is_brewer)
             self._cached_device_ingredients = nil
         end
     end
+    self._cached_raw_key = nil  -- 失效分类缓存
     self:RefreshDisplay()
 end
 

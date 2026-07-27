@@ -40,6 +40,11 @@ GLOBAL.CSP_SHOW_VIEWPORT_BORDER = show_viewport_border
 local enable_debug_logging = GetModConfigData("enable_debug_logging")
 GLOBAL.CSP_DEBUG_LOGGING = enable_debug_logging
 
+-- 缓存配置值，避免在 CreateRecipePanel 中重复获取
+local local_enable_backpack = GetModConfigData("enable_backpack_check")
+local local_auto_cook_source = GetModConfigData("enable_auto_cook")
+local local_select_mode = GetModConfigData("recipe_select_behavior") or "click"
+
 AddSimPostInit(function()
     g_cookbook_data:Collect()
 end)
@@ -115,13 +120,13 @@ local function CreateRecipePanel(hud, container, is_brewer)
         return nil
     end
 
-    local enable_backpack = GetModConfigData("enable_backpack_check")
+    local enable_backpack = local_enable_backpack
 	if enable_backpack == true then enable_backpack = "inv" end
 	if enable_backpack == false then enable_backpack = "off" end
-	local auto_cook_source = GetModConfigData("enable_auto_cook")
+	local auto_cook_source = local_auto_cook_source
 	local range_init = auto_cook_source ~= "off" and (memory_data._range_search or 30) or nil
-	local select_mode = GetModConfigData("recipe_select_behavior") or "click"
-	local debug_logging = GetModConfigData("enable_debug_logging")
+	local select_mode = local_select_mode
+	local debug_logging = enable_debug_logging
 	local panel = RecipePanel(g_cookbook_data, { strings = STRINGS, tuning = TUNING }, hud.owner, enable_backpack, auto_cook_source, range_init, panel_prefs, select_mode, debug_logging)
     parent:AddChild(panel)
     local pos = containerwidget:GetPosition()

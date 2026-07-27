@@ -33,6 +33,7 @@ local CookbookData = Class(function(self)
     }
     self.all = {}
     self._ingredient_aliases = INGREDIENT_ALIASES
+    self._possible_cache = {}
 end)
 
 local function _ResolveFoodIcon(prefab, cookbook_tex, cookbook_atlas)
@@ -155,6 +156,7 @@ end
 
 function CookbookData:Collect()
     self.all = {}
+    self._possible_cache = {}
     for cat, _ in pairs(self.categories) do
         self.categories[cat] = {}
     end
@@ -554,6 +556,19 @@ function CookbookData:GetPossibleRecipes(prefab_list, ingredients, max_slots, ma
         return nil
     end
 
+    -- 缓存键：排序后的 prefab 列表 + 关键参数
+    local cache_key = table.concat(prefab_list, ",") .. "|" .. (max_slots or 4) .. "|" .. (use_quantity_matching and "1" or "0")
+    if counts then
+        local ck = {}
+        for k, v in pairs(counts) do table.insert(ck, k .. "=" .. v) end
+        table.sort(ck)
+        cache_key = cache_key .. "|" .. table.concat(ck, ",")
+    end
+    local cached = self._possible_cache[cache_key]
+    if cached then
+        return next(cached) and cached or nil
+    end
+
     ingredients = ingredients or cooking.ingredients
     max_slots = max_slots or 4
     max_tag_values = max_tag_values or self._max_tag_values
@@ -687,6 +702,7 @@ function CookbookData:GetPossibleRecipes(prefab_list, ingredients, max_slots, ma
         end
     end
 
+    self._possible_cache[cache_key] = possible
     return next(possible) and possible or nil
 end
 
