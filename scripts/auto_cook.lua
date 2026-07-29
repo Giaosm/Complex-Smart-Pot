@@ -448,6 +448,26 @@ local function Cook(prefab, data, range, auto_cook_source, target_cont, quiet)
                 local container = OpenContainer(cont)
                 if container then
                     if _SyncPotContents(container, cont, data, auto_cook_source) then
+                        -- 等待服务器确认所有食材已到锅，防网络延迟导致烹饪失败
+                        local max_wait = 15
+                        for _ = 1, max_wait do
+                            local items = container:GetItems() or {}
+                            local need = {}
+                            for _, p in ipairs(data) do
+                                need[p] = (need[p] or 0) + 1
+                            end
+                            for _, item in pairs(items) do
+                                if item and item.prefab and need[item.prefab] then
+                                    need[item.prefab] = need[item.prefab] - 1
+                                end
+                            end
+                            local ok = true
+                            for _, n in pairs(need) do
+                                if n > 0 then ok = false; break end
+                            end
+                            if ok then break end
+                            Sleep(FRAMES)
+                        end
                         StewerFn[prefab](cont, ThePlayer)
                         if not quiet and #conts > 1 then
                             cont._flag_next = true
