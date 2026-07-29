@@ -448,26 +448,30 @@ local function Cook(prefab, data, range, auto_cook_source, target_cont, quiet)
                 local container = OpenContainer(cont)
                 if container then
                     if _SyncPotContents(container, cont, data, auto_cook_source) then
-                        -- 等待服务器确认所有食材已到锅，防网络延迟导致烹饪失败
-                        local max_wait = 15
-                        for _ = 1, max_wait do
+                        -- 等待容器数据同步：确保所有食材在客户端可见后再点烹饪
+                        local timeout = GetTime() + 2
+                        repeat
                             local items = container:GetItems() or {}
-                            local need = {}
-                            for _, p in ipairs(data) do
-                                need[p] = (need[p] or 0) + 1
-                            end
-                            for _, item in pairs(items) do
-                                if item and item.prefab and need[item.prefab] then
-                                    need[item.prefab] = need[item.prefab] - 1
+                            local item_counts = {}
+                            for _, si in pairs(items) do
+                                if si and si.prefab then
+                                    item_counts[si.prefab] = (item_counts[si.prefab] or 0) + 1
                                 end
                             end
-                            local ok = true
-                            for _, n in pairs(need) do
-                                if n > 0 then ok = false; break end
+                            local all_visible = true
+                            for _, need_prefab in ipairs(data) do
+                                local n = item_counts[need_prefab]
+                                if n and n > 0 then
+                                    item_counts[need_prefab] = n - 1
+                                else
+                                    all_visible = false
+                                    break
+                                end
                             end
-                            if ok then break end
-                            Sleep(FRAMES)
-                        end
+                            if all_visible then break end
+                            Sleep(1)
+                        until GetTime() > timeout
+
                         StewerFn[prefab](cont, ThePlayer)
                         if not quiet and #conts > 1 then
                             cont._flag_next = true
