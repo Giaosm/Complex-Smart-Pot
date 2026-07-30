@@ -112,6 +112,8 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
     self._scroll_to_prefab = nil
     self._cached_device_ingredients = nil
     self._cached_bag_counts = nil
+    self._cached_bag_counts_raw = nil
+    self._cached_sorted_defs = nil
 
 	if self._enable_auto_cook then
         self._auto_cook = GetAutoCook()(self, range_init, self._auto_cook_source)
@@ -191,7 +193,13 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
         refresh_range()
     end
 
-    self._recipe_popup = self:AddChild(RecipePopup(self._prefs))
+    self._recipe_popup = self:AddChild(RecipePopup(self._prefs, function(recipe_item)
+        return self:GetCraftableCombinations(recipe_item)
+    end, function(recipe_name, ingredients)
+        if self._auto_cook then
+            self._auto_cook:QuickCookWithIngredients(recipe_name, ingredients)
+        end
+    end))
     self._recipe_popup:SetPosition(140, 0)
 
     self:RefreshDisplay()
@@ -594,6 +602,8 @@ function RecipePanel:RefreshDisplay()
         if still_visible then
             if not self._recipe_popup:IsVisible() then
                 self._recipe_popup:ShowForRecipe(self._active_popup_data, self._S, self._T)
+            else
+                self._recipe_popup:_UpdateCraftView()
             end
             local max_row = math.max(1, #items - VISIBLE_ROWS + 1)
             local target_row = math.max(1, math.min(current_idx - math.floor(VISIBLE_ROWS / 2), max_row))
@@ -680,6 +690,7 @@ function RecipePanel:SetCooker(cooker_prefab, is_brewer)
     self._cooker = cooker_prefab
     self._is_brewer = is_brewer == true
     self._cached_bag_counts = nil
+    self._cached_bag_counts_raw = nil
 
     if self._is_brewer then
         self._max_slots = 3 -- 默认值，后续会被 SetAcceptsStacksFromContainer 动态覆盖
@@ -756,6 +767,21 @@ function RecipePanel:SetCooker(cooker_prefab, is_brewer)
             self._cached_device_ingredients = nil
         end
     end
+    -- 缓存按优先级排序的料理列表（用于可做配方视图的优先级验证）
+    self._cached_sorted_defs = nil
+    if self._cooker_recipes then
+        local sorted = {}
+        for prefab, def in pairs(self._cooker_recipes) do
+            table.insert(sorted, { prefab = prefab, def = def })
+        end
+        table.sort(sorted, function(a, b)
+            local pa = a.def.priority or 0
+            local pb = b.def.priority or 0
+            if pa ~= pb then return pa > pb end
+            return a.prefab < b.prefab
+        end)
+        self._cached_sorted_defs = sorted
+    end
     self._cached_raw_key = nil  -- 失效分类缓存
     self:RefreshDisplay()
 end
@@ -815,14 +841,16 @@ function RecipePanel:_RefreshBackpackRecipes()
     end
 
     local bag_counts = {}
+    local raw_counts = {}
     if self._backpack_check_mode ~= "fridge" then
-        bag_counts = Scanner.CountIngredients(inv:GetItems(), max_per_type, self._cached_device_ingredients)
+        bag_counts = Scanner.CountIngredients(inv:GetItems(), max_per_type, self._cached_device_ingredients, nil, raw_counts)
     end
 
     local active_item = inv:GetActiveItem()
     if active_item and active_item.prefab and self._cached_device_ingredients and self._cached_device_ingredients[active_item.prefab] then
         local count = GetStackSize(active_item)
         bag_counts[active_item.prefab] = math.min((bag_counts[active_item.prefab] or 0) + count, max_per_type)
+        raw_counts[active_item.prefab] = (raw_counts[active_item.prefab] or 0) + count
     end
 
     local open_containers = inv:GetOpenContainers() or {}
@@ -843,7 +871,7 @@ function RecipePanel:_RefreshBackpackRecipes()
                 end
 
                 if should_scan then
-                    Scanner.CountIngredients(container:GetItems(), max_per_type, self._cached_device_ingredients, bag_counts)
+                    Scanner.CountIngredients(container:GetItems(), max_per_type, self._cached_device_ingredients, bag_counts, raw_counts)
                 end
             end
         end
@@ -867,15 +895,21 @@ function RecipePanel:_RefreshBackpackRecipes()
 	end
 	if same then
 	    self._backpack_dirty = false
-	    return
+	    if not self._active_popup_data then
+	        self._cached_bag_counts_raw = raw_counts
+	        return
+	    end
+	else
+	    self._cached_bag_counts = {}
+	    for k, v in pairs(bag_counts) do
+	        self._cached_bag_counts[k] = math.min(v, max_per_type)
+	    end
 	end
+	self._cached_bag_counts_raw = raw_counts
 
-	self._cached_bag_counts = {}
-	for k, v in pairs(bag_counts) do
-	    self._cached_bag_counts[k] = math.min(v, max_per_type)
+	if not same then
+	    self._backpack_recipes = self.data:GetMatchingRecipesFromCounts(self._cooker, bag_counts, fixed_counts, self._cooker_recipes, self._max_slots, self._brewing_ingredients, pot_counts, self._use_quantity_matching)
 	end
-
-	self._backpack_recipes = self.data:GetMatchingRecipesFromCounts(self._cooker, bag_counts, fixed_counts, self._cooker_recipes, self._max_slots, self._brewing_ingredients, pot_counts, self._use_quantity_matching)
 
         if self._debug_logging then
             local dbg_items = {}
@@ -1084,6 +1118,21 @@ function RecipePanel:OnSlotChanged()
     self._cached_pot_counts = counts
     self._backpack_dirty = true
     self:SetPotIngredients(prefabs, self._container)
+end
+
+-- 返回指定料理的具体食材组合（用于弹窗"可做配方"视图）
+function RecipePanel:GetCraftableCombinations(recipe_item)
+    if not recipe_item then return nil end
+    return self.data:GetRecipeCraftableCombos(
+        recipe_item,
+        self._cached_bag_counts,
+        self._cached_pot_counts,
+        self._cooker,
+        self._max_slots,
+        self._use_quantity_matching,
+        self._cached_bag_counts_raw,
+        self._cached_sorted_defs
+    )
 end
 
 return RecipePanel

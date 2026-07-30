@@ -714,6 +714,59 @@ function AutoCook:QuickCook(recipe_name)
     return true
 end
 
+function AutoCook:QuickCookWithIngredients(recipe_name, ingredients)
+    if self._task_queue:IsRunning() then
+        return false
+    end
+
+    local current_container = self._panel._container
+    if not current_container then
+        return false
+    end
+
+    if self._panel._cooker_recipes and not self._panel._cooker_recipes[recipe_name] then
+        Say(STRINGS.CSP.QUICK_WRONG_DEVICE)
+        return false
+    end
+
+    local slot_data = self._panel._slot_data
+    if slot_data and next(slot_data) then
+        local container = current_container.replica and current_container.replica.container
+        if container then
+            for _, item in pairs(container:GetItems() or {}) do
+                if item and not CanTakeItem(item) then
+                    Say(STRINGS.CSP.QUICK_NO_SPACE)
+                    return false
+                end
+            end
+        end
+    end
+
+    if not CheckIng(ingredients, self._auto_cook_source, current_container) then
+        Say(STRINGS.CSP.QUICK_NO_INGREDIENTS)
+        return false
+    end
+
+    local hud = ThePlayer and ThePlayer.HUD
+    if hud and hud.CloseContainer and current_container then
+        hud:CloseContainer(current_container)
+    end
+
+    if HasActiveItem() then
+        ReturnActiveItem()
+    end
+
+    self:SaveRecipeMemory(recipe_name, ingredients)
+
+    self._task_queue:RegNowTask(
+        function()
+            return Cook(current_container.prefab, ingredients, self._range_search, self._auto_cook_source, current_container, true)
+        end
+    )
+
+    return true
+end
+
 function AutoCook:Execute()
     if self._task_queue:IsRunning() then
         return false

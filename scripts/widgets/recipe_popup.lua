@@ -32,10 +32,12 @@ local function _makeLine(parent, x, y, w, h, r, g, b, a)
     return line
 end
 
-local RecipePopup = Class(Widget, function(self, prefs)
+local RecipePopup = Class(Widget, function(self, prefs, get_craftable_fn, cook_fn)
     Widget._ctor(self, "RecipePopup")
 
     self._prefs = prefs or {}
+    self._get_craftable_fn = get_craftable_fn
+    self._cook_fn = cook_fn
 
     self:SetScale(2, 2, 2)
 
@@ -61,6 +63,9 @@ local RecipePopup = Class(Widget, function(self, prefs)
     self.name_icon:SetOnClick(function()
         self._showing_craft = not self._showing_craft
         self._prefs.show_craft_view = self._showing_craft
+        if self._showing_craft then
+            self:_UpdateCraftView()
+        end
         self:_ApplyCraftView()
         if not self._showing_craft then
             self:_ApplyScroll(self._min_section)
@@ -125,6 +130,10 @@ local RecipePopup = Class(Widget, function(self, prefs)
     self._craft_section = self:_CreateReqSection("craft", POPUP_H / 2 - 118, CRAFT_VIEW_H)
     self._craft_section.root:Hide()
     self._craft_section.scrollbar:Hide()
+    self._craft_slot_pool = {}
+    self._craft_portions = {}
+    self._craft_btns = {}
+    self._current_recipe_data = nil
 
     self:_ApplyCraftView()
     self:Hide()
@@ -132,7 +141,6 @@ end)
 
 function RecipePopup:_ApplyCraftView()
     if self._showing_craft then
-        self.min_label:SetString(STRINGS.CSP.POPUP_CRAFTABLE)
         self._min_section.root:Hide()
         self._min_section.scrollbar:Hide()
         self.max_label:Hide()
@@ -151,6 +159,129 @@ function RecipePopup:_ApplyCraftView()
         self._craft_section.root:Hide()
         self._craft_section.scrollbar:Hide()
     end
+end
+
+function RecipePopup:_UpdateCraftView()
+    local content = self._craft_section.content
+    local pool = self._craft_slot_pool
+    local portions_labels = self._craft_portions
+
+    -- 清空旧槽位
+    for _, slot in ipairs(pool) do slot:Hide() end
+    for _, label in ipairs(portions_labels) do label:Hide() end
+    for _, btn in ipairs(self._craft_btns) do btn:Hide() end
+
+    if not self._current_recipe_data or not self._get_craftable_fn then
+        return
+    end
+
+    local combos = self._get_craftable_fn(self._current_recipe_data)
+    local combo_count = combos and #combos or 0
+    local max_render = _G.CSP_MAX_RENDER_COMBOS or 100
+    if max_render > 0 and combo_count > max_render then
+        local sliced = {}
+        for i = 1, max_render do sliced[i] = combos[i] end
+        combos = sliced
+    end
+    self.min_label:SetString(STRINGS.CSP.POPUP_CRAFTABLE .. " (" .. combo_count .. ")")
+    if combo_count == 0 then
+        return
+    end
+
+    -- 使用与最低需求一致的尺寸：24px icon，26px 间距，36px 行高
+    local icon_size = 24
+    local spacing   = 26
+    local y_step    = -36
+    local visible_rows = math.floor(CRAFT_VIEW_H / (-y_step))
+    self._craft_section.visible_rows = visible_rows
+    self._craft_section.max_rows = #combos
+    -- scroll 由末尾的 _ApplyScroll 统一处理
+
+    local col_start_x = 7
+
+    for ci, combo in ipairs(combos) do
+        local ingrs = combo.ingredients
+        local n = #ingrs
+        local slot_base = (ci - 1) * n
+        local py = (ci - 1) * y_step
+
+        -- 食材图标
+        for si = 1, n do
+            local idx = slot_base + si
+            local slot
+            if #pool >= idx then
+                slot = pool[idx]
+            else
+                slot = self:_CreatePoolSlot(content)
+                table.insert(pool, slot)
+            end
+            local prefab = ingrs[si]
+            local tex, atlas = self:_ResolveReqAssets(prefab, false)
+            slot:Show()
+            slot:SetPosition(col_start_x + (si - 1) * spacing, py)
+            if atlas then
+                pcall(slot.img.SetTexture, slot.img, atlas, tex)
+            else
+                slot.img:SetTexture("images/food_tags.xml", "unknown.tex")
+            end
+            slot.img:ScaleToSize(icon_size, icon_size)
+            slot.bg:Show()
+            slot.bg:ScaleToSize(spacing, spacing)
+            slot.txt:SetString("")
+        end
+
+        -- 份数标签
+        local label
+        if #portions_labels >= ci then
+            label = portions_labels[ci]
+        else
+            label = content:AddChild(Text(NUMBERFONT, 14))
+            table.insert(portions_labels, label)
+        end
+        label:Show()
+        label:SetPosition(col_start_x + n * spacing + 4, py)
+        label:SetString("×" .. combo.portions)
+        label:SetColour(0.9, 0.8, 0.3, 1)
+
+        -- 操作按钮（先占位，后续实现）
+        local btn
+        if #self._craft_btns >= ci then
+            btn = self._craft_btns[ci]
+        else
+            btn = content:AddChild(ImageButton(
+                "images/global_redux.xml",
+                "button_carny_square_normal.tex",
+                "button_carny_square_hover.tex",
+                "button_carny_square_disabled.tex",
+                "button_carny_square_down.tex"
+            ))
+            btn.scale_on_focus = false
+            btn.move_on_click = false
+            btn:SetFont(CHATFONT)
+            btn:SetTextSize(18)
+            table.insert(self._craft_btns, btn)
+        end
+        btn:Show()
+        btn:SetText(STRINGS.CSP.POPUP_COOK_BTN)
+        btn:ForceImageSize(50, 20)
+        btn:SetPosition(col_start_x + n * spacing + 46, py)
+        local captured_combo = combo
+        btn:SetOnClick(function()
+            if self._cook_fn and self._current_recipe_data then
+                self._cook_fn(self._current_recipe_data.prefab, captured_combo.ingredients)
+            end
+        end)
+    end
+
+    -- 隐藏多余项
+    for i = #combos + 1, #portions_labels do
+        portions_labels[i]:Hide()
+    end
+    for i = #combos + 1, #self._craft_btns do
+        self._craft_btns[i]:Hide()
+    end
+
+    self:_ApplyScroll(self._craft_section)
 end
 
 function RecipePopup:_ResolveReqAssets(key, is_tag)
@@ -297,16 +428,16 @@ function RecipePopup:_CreateReqSection(name, y_offset, view_h)
     local content = root:AddChild(Widget(name .. "_content"))
     self:_AddViewportBorder(root, -REQ_VIEW_PAD_X + 1, -(view_h - REQ_VIEW_PAD) + 1, REQ_VIEW_W - 2, view_h - 2)
 
-    local scrollbar = self:_MakeScrollbar(name .. "_scrollbar")
+    local scrollbar = self:_MakeScrollbar(name .. "_scrollbar", view_h)
     scrollbar:SetPosition(root_x + REQ_VIEW_W - REQ_VIEW_PAD_X + 3, y_offset - view_h / 2 + REQ_VIEW_PAD)
     self:AddChild(scrollbar)
 
-    return { root = root, content = content, pool = {}, scroll = 0, max_rows = 0, scrollbar = scrollbar }
+    return { root = root, content = content, pool = {}, scroll = 0, max_rows = 0, visible_rows = 2, scrollbar = scrollbar }
 end
 
-function RecipePopup:_MakeScrollbar(name)
+function RecipePopup:_MakeScrollbar(name, bar_h)
+    bar_h = bar_h or REQ_VIEW_H
     local w = Widget(name)
-    local bar_h = REQ_VIEW_H
     local bar = w:AddChild(Image("images/quagmire_recipebook.xml", "quagmire_recipe_scroll_bar.tex"))
     bar:ScaleToSize(2, bar_h)
     local handle = w:AddChild(Image("images/quagmire_recipebook.xml", "quagmire_recipe_scroll_handle.tex"))
@@ -327,14 +458,15 @@ function RecipePopup:_AddViewportBorder(parent, x, y, w, h)
     _makeLine(border, x + w, y + h / 2, 1, h, 0.5, 0.4, 0.3, 0.5)
 end
 
-function RecipePopup:_UpdateScrollbar(scrollbar, scroll, content_rows)
-    if content_rows <= 2 then
+function RecipePopup:_UpdateScrollbar(scrollbar, scroll, content_rows, visible_rows)
+    visible_rows = visible_rows or 2
+    if content_rows <= visible_rows then
         scrollbar:Hide()
         return
     end
     scrollbar:Show()
     local bar_h = scrollbar._bar_h
-    local total = math.max(1, (content_rows - 2) * SCROLL_STEP)
+    local total = math.max(1, (content_rows - visible_rows) * SCROLL_STEP)
     local handle_h = 8
     scrollbar._handle:ScaleToSize(6, handle_h)
     local max_y = bar_h / 2 - handle_h / 2
@@ -344,10 +476,11 @@ end
 
 function RecipePopup:_ApplyScroll(section)
     local max_rows = section.max_rows
-    local max_scroll = math.max(0, (max_rows - 2) * SCROLL_STEP)
+    local visible_rows = section.visible_rows or 2
+    local max_scroll = math.max(0, (max_rows - visible_rows) * SCROLL_STEP)
     section.scroll = math.clamp(section.scroll, 0, max_scroll)
     section.content:SetPosition(0, section.scroll)
-    self:_UpdateScrollbar(section.scrollbar, section.scroll, max_rows)
+    self:_UpdateScrollbar(section.scrollbar, section.scroll, max_rows, visible_rows)
 end
 
 local function _round1(v) return math.floor((v or 0) * 10 + 0.5) / 10 end
@@ -358,6 +491,8 @@ function RecipePopup:ShowForRecipe(data, S, T)
         self:Hide()
         return
     end
+
+    self._current_recipe_data = data
 
     self.name_text:SetString(data.name)
     local name_w = self.name_text:GetRegionSize()
@@ -560,7 +695,12 @@ function RecipePopup:ShowForRecipe(data, S, T)
     self:_ApplyScroll(self._min_section)
     self:_ApplyScroll(self._max_section)
 
+    self:_UpdateCraftView()
     self:Show()
+    self:_ApplyCraftView()
+    if self._showing_craft then
+        self:_ApplyScroll(self._craft_section)
+    end
 end
 
 function RecipePopup:OnHide()
@@ -586,7 +726,12 @@ function RecipePopup:OnControl(control, down)
     local ly = (mouse.y - py) / s.y
 
     local delta = control == CONTROL_SCROLLFWD and SCROLL_STEP or -SCROLL_STEP
-    local section = ly >= -49 and self._min_section or self._max_section
+    local section
+    if self._showing_craft then
+        section = self._craft_section
+    else
+        section = ly >= -49 and self._min_section or self._max_section
+    end
     section.scroll = section.scroll + delta
     self:_ApplyScroll(section)
     return true

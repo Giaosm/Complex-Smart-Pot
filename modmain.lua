@@ -39,6 +39,8 @@ local show_viewport_border = GetModConfigData("show_viewport_border")
 GLOBAL.CSP_SHOW_VIEWPORT_BORDER = show_viewport_border
 local enable_debug_logging = GetModConfigData("enable_debug_logging")
 GLOBAL.CSP_DEBUG_LOGGING = enable_debug_logging
+local max_render_combos = GetModConfigData("max_render_combos") or 100
+GLOBAL.CSP_MAX_RENDER_COMBOS = max_render_combos
 
 -- 缓存配置值，避免在 CreateRecipePanel 中重复获取
 local local_enable_backpack = GetModConfigData("enable_backpack_check")
@@ -102,6 +104,12 @@ local function ClearAutoCookMemory()
     print(STRINGS.CSP.MEMORY_CLEARED)
 end
 _G.ClearAutoCookMemory = ClearAutoCookMemory
+
+_G.SetMaxRenderCombos = function(n)
+    n = tonumber(n) or 0
+    GLOBAL.CSP_MAX_RENDER_COMBOS = math.max(0, n)
+    print(STRINGS.CSP.COMBO_LIMIT_SET .. tostring(GLOBAL.CSP_MAX_RENDER_COMBOS))
+end
 
 local function CreateRecipePanel(hud, container, is_brewer)
     if recipe_panels[container] ~= nil then

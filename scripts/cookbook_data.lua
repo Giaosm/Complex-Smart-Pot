@@ -843,4 +843,187 @@ function CookbookData:GetHighlightedRecipes(matching, cooker_recipes)
     return highlight_group
 end
 
+-- 为指定料理生成具体的食材组合 + 份数（用于弹窗"可做配方"视图）
+function CookbookData:GetRecipeCraftableCombos(recipe_item, bag_counts, pot_counts, cooker, max_slots, use_quantity_matching, raw_bag_counts, sorted_defs)
+    if not recipe_item or not bag_counts or next(bag_counts) == nil then
+        return nil
+    end
+
+    -- 用 (料理 + bag + pot + raw_bag) 做缓存 key，输入不变时直接返回
+    local cache_key = recipe_item.prefab .. "|"
+    local keys = {}
+    for k, v in pairs(bag_counts) do keys[#keys + 1] = "b" .. k .. "=" .. v end
+    for k, v in pairs(pot_counts or {}) do keys[#keys + 1] = "p" .. k .. "=" .. v end
+    for k, v in pairs(raw_bag_counts or {}) do keys[#keys + 1] = "r" .. k .. "=" .. v end
+    table.sort(keys)
+    cache_key = cache_key .. table.concat(keys, ";")
+    if self._craft_combo_cache and self._craft_combo_cache[cache_key] then
+        return self._craft_combo_cache[cache_key]
+    end
+
+    local reqs = recipe_item.recipe_requirements
+    if not reqs then return nil end
+
+    local ingredients = cooking.ingredients
+    max_slots = max_slots or 4
+    pot_counts = pot_counts or {}
+    raw_bag_counts = raw_bag_counts or bag_counts
+
+    -- 份数计算用原始（未截断）库存
+    local available = {}
+    for k, v in pairs(pot_counts) do available[k] = (available[k] or 0) + v end
+    for k, v in pairs(raw_bag_counts) do available[k] = (available[k] or 0) + v end
+
+    local recipe_prefab = recipe_item.prefab
+
+    -- 测试一组完整食材是否被游戏实际匹配为当前料理
+    local function _testCombo(slot_list)
+        local names, tags = _BuildNamesTags(slot_list, ingredients)
+        -- 首先当前料理必须符合
+        if recipe_item.recipe_def.test ~= nil then
+            local ok, ret = pcall(recipe_item.recipe_def.test, cooker, names, tags)
+            if not (ok and ret) then return false end
+        else
+            if reqs.minnames then
+                for name, min_amt in pairs(reqs.minnames) do
+                    if (names[name] or 0) < min_amt then return false end
+                end
+            end
+            if reqs.analog_groups then
+                for _, group in ipairs(reqs.analog_groups) do
+                    local total = 0
+                    for _, gname in ipairs(group.names) do
+                        total = total + (names[gname] or 0)
+                    end
+                    if total < group.amount then return false end
+                end
+            end
+            if reqs.mintags then
+                for tag, min_val in pairs(reqs.mintags) do
+                    if (tags[tag] or 0) < min_val then return false end
+                end
+            end
+            if reqs.maxnames then
+                for name, max_val in pairs(reqs.maxnames) do
+                    if (names[name] or 0) > max_val then return false end
+                end
+            end
+            if reqs.maxtags then
+                for tag, max_val in pairs(reqs.maxtags) do
+                    if (tags[tag] or 0) > max_val then return false end
+                end
+            end
+        end
+
+        -- 按优先级验证：第一个匹配的料理才是游戏实际会产出的
+        if sorted_defs then
+            for _, entry in ipairs(sorted_defs) do
+                if entry.def.test ~= nil then
+                    local ok, ret = pcall(entry.def.test, cooker, names, tags)
+                    if ok and ret then
+                        return entry.prefab == recipe_prefab
+                    end
+                end
+            end
+        end
+
+        return true
+    end
+
+    -- 构建候选食材列表（来自容器）
+    local candidates = {}
+    for prefab, count in pairs(bag_counts) do
+        if count > 0 then
+            table.insert(candidates, prefab)
+        end
+    end
+    if #candidates == 0 then
+        local base = {}
+        for prefab, count in pairs(pot_counts) do
+            for _ = 1, count do table.insert(base, prefab) end
+        end
+        if #base == max_slots and _testCombo(base) then
+            if not self._craft_combo_cache then self._craft_combo_cache = {} end
+            local r = {{ ingredients = base, portions = 1 }}
+            self._craft_combo_cache[cache_key] = r
+            return r
+        end
+        if not self._craft_combo_cache then self._craft_combo_cache = {} end
+        self._craft_combo_cache[cache_key] = nil
+        return nil
+    end
+    table.sort(candidates)
+
+    local result = {}
+    local seen = {}
+
+    -- 固定底槽：锅里的食材
+    local base_slots = {}
+    for prefab, count in pairs(pot_counts) do
+        for _ = 1, count do
+            table.insert(base_slots, prefab)
+        end
+    end
+
+    local remaining = max_slots - #base_slots
+    if remaining < 0 then
+        if not self._craft_combo_cache then self._craft_combo_cache = {} end
+        self._craft_combo_cache[cache_key] = nil
+        return nil
+    end
+
+    -- 复制 bag_counts 以便回溯时修改
+    local bag_copy = {}
+    for k, v in pairs(bag_counts) do bag_copy[k] = v end
+
+    -- 回溯搜索：填充剩余槽位
+    local function _search(filled, start_idx, rem)
+        if rem == 0 then
+            -- 去重
+            local key_parts = {}
+            for _, p in ipairs(filled) do table.insert(key_parts, p) end
+            table.sort(key_parts)
+            local skey = table.concat(key_parts, ",")
+            if seen[skey] then return end
+            seen[skey] = true
+
+            if _testCombo(filled) then
+                local used = {}
+                for _, p in ipairs(filled) do used[p] = (used[p] or 0) + 1 end
+                local portions = math.huge
+                for p, c in pairs(used) do
+                    local a = available[p] or 0
+                    if c > 0 then
+                        portions = math.min(portions, math.floor(a / c))
+                    end
+                end
+                portions = math.max(1, portions)
+                local ingr_copy = {}
+                for _, v in ipairs(filled) do table.insert(ingr_copy, v) end
+                table.insert(result, { ingredients = ingr_copy, portions = portions })
+            end
+            return
+        end
+
+        for i = start_idx, #candidates do
+            local p = candidates[i]
+            if bag_copy[p] > 0 then
+                table.insert(filled, p)
+                bag_copy[p] = bag_copy[p] - 1
+                _search(filled, i, rem - 1)
+                bag_copy[p] = bag_copy[p] + 1
+                table.remove(filled)
+            end
+        end
+    end
+
+    _search(base_slots, 1, remaining)
+
+    table.sort(result, function(a, b) return a.portions > b.portions end)
+
+    if not self._craft_combo_cache then self._craft_combo_cache = {} end
+    self._craft_combo_cache[cache_key] = #result > 0 and result or nil
+    return self._craft_combo_cache[cache_key]
+end
+
 return CookbookData

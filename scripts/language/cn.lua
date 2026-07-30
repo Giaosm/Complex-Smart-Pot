@@ -38,4 +38,6 @@ STRINGS.CSP.QUICK_NO_SPACE     = "我已经拿不下了"
 STRINGS.CSP.QUICK_NO_INGREDIENTS = "我没有足够的食材"
 
 -- 其他
-STRINGS.CSP.MEMORY_CLEARED     = "复杂智能锅：所有自动烹饪记忆已清空"
+STRINGS.CSP.MEMORY_CLEARED      = "复杂智能锅：所有自动烹饪记忆已清空"
+STRINGS.CSP.COMBO_LIMIT_SET     = "复杂智能锅：最大渲染组合数已设为 "
+STRINGS.CSP.POPUP_COOK_BTN      = "烹饪"

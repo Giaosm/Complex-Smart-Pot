@@ -39,3 +39,5 @@ STRINGS.CSP.QUICK_NO_INGREDIENTS = "I don't have enough ingredients"
 
 -- Misc
 STRINGS.CSP.MEMORY_CLEARED = "Auto-cook memory cleared"
+STRINGS.CSP.COMBO_LIMIT_SET = "Complex Smart Pot: Max render combos set to "
+STRINGS.CSP.POPUP_COOK_BTN = "Cook"

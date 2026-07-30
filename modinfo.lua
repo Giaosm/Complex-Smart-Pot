@@ -2,7 +2,7 @@
 local isCh = locale and locale:match("^zh")
 
 name = isCh and "复杂智能锅" or "Complex Smart Pot"
-version = "1.1.5.1"
+version = "1.1.6"
 author = "哇唧唧哇"
 forumthread = ""
 dont_starve_compatible = false
@@ -135,6 +135,20 @@ configuration_options = {
         default = false,
     },
     Subtitle("其他", "Other"),
+    {
+        name = "max_render_combos",
+        label = isCh and "可做配方最大渲染" or "Max Craft View",
+        hover = isCh and "可做配方视图中每个料理最多渲染的配方组合数量\n控制台输入SetMaxRenderCombos(0)可调整最大渲染组合数量,“0”表示全部"
+            or "Max recipe combos to render per dish in craft view\nConsole: SetMaxRenderCombos(0) to adjust (0=all)",
+        options = {
+            { description = isCh and "全部" or "All", data = 0 },
+            { description = "50", data = 50 },
+            { description = "100", data = 100 },
+            { description = "200", data = 200 },
+            { description = "500", data = 500 },
+        },
+        default = 100,
+    },
     {
         name = "show_viewport_border",
         label = isCh and "显示视口边框" or "Show Viewport Border",
