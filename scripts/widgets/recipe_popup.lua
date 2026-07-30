@@ -1,7 +1,8 @@
 -- 食谱弹窗：显示料理详情（三维、食物类型、腐烂时间、配方需求、最高限制）
-local Widget = require("widgets/widget")
-local Image  = require("widgets/image")
-local Text   = require("widgets/text")
+local Widget      = require("widgets/widget")
+local Image       = require("widgets/image")
+local ImageButton = require("widgets/imagebutton")
+local Text        = require("widgets/text")
 
 local CRAFTING_ATLAS_RESOLVED = resolvefilepath(CRAFTING_ATLAS)
 
@@ -18,6 +19,8 @@ local REQ_VIEW_PAD = 16
 local REQ_VIEW_PAD_X = 8.5
 local SCROLL_STEP = 36
 
+local CRAFT_VIEW_H = 155
+
 local GEQ = "\226\137\165"
 local LEQ = "\226\137\164"
 
@@ -29,8 +32,10 @@ local function _makeLine(parent, x, y, w, h, r, g, b, a)
     return line
 end
 
-local RecipePopup = Class(Widget, function(self)
+local RecipePopup = Class(Widget, function(self, prefs)
     Widget._ctor(self, "RecipePopup")
+
+    self._prefs = prefs or {}
 
     self:SetScale(2, 2, 2)
 
@@ -42,6 +47,26 @@ local RecipePopup = Class(Widget, function(self)
     self.name_text = self:AddChild(Text(UIFONT, 26))
     self.name_text:SetPosition(0, POPUP_H / 2 - 15)
     self.name_text:SetColour(1, 0.9, 0.5, 1)
+
+    self.name_icon = self:AddChild(ImageButton(
+        "images/button_icons.xml", "refresh.tex", "refresh.tex", "refresh.tex", "refresh.tex",
+        nil, nil, {1, 1}, {0, 0}
+    ))
+    self.name_icon:ForceImageSize(12, 12)
+    self.name_icon.scale_on_focus = false
+    self.name_icon.move_on_click = false
+    self.name_icon:Hide()
+
+    self._showing_craft = self._prefs.show_craft_view or false
+    self.name_icon:SetOnClick(function()
+        self._showing_craft = not self._showing_craft
+        self._prefs.show_craft_view = self._showing_craft
+        self:_ApplyCraftView()
+        if not self._showing_craft then
+            self:_ApplyScroll(self._min_section)
+            self:_ApplyScroll(self._max_section)
+        end
+    end)
 
     self.stats_text = self:AddChild(Text(BODYTEXTFONT, 20))
     self.stats_text:SetPosition(0, POPUP_H / 2 - 45)
@@ -97,8 +122,36 @@ local RecipePopup = Class(Widget, function(self)
     self.max_label:SetColour(0.7, 0.7, 0.7, 1)
     self.max_label:SetString(STRINGS.CSP.POPUP_MAX_REQ)
 
+    self._craft_section = self:_CreateReqSection("craft", POPUP_H / 2 - 118, CRAFT_VIEW_H)
+    self._craft_section.root:Hide()
+    self._craft_section.scrollbar:Hide()
+
+    self:_ApplyCraftView()
     self:Hide()
 end)
+
+function RecipePopup:_ApplyCraftView()
+    if self._showing_craft then
+        self.min_label:SetString(STRINGS.CSP.POPUP_CRAFTABLE)
+        self._min_section.root:Hide()
+        self._min_section.scrollbar:Hide()
+        self.max_label:Hide()
+        self.sep2_left:Hide()
+        self.sep2_right:Hide()
+        self._max_section.root:Hide()
+        self._max_section.scrollbar:Hide()
+        self._craft_section.root:Show()
+    else
+        self.min_label:SetString(STRINGS.CSP.POPUP_MIN_REQ)
+        self._min_section.root:Show()
+        self.max_label:Show()
+        self.sep2_left:Show()
+        self.sep2_right:Show()
+        self._max_section.root:Show()
+        self._craft_section.root:Hide()
+        self._craft_section.scrollbar:Hide()
+    end
+end
 
 function RecipePopup:_ResolveReqAssets(key, is_tag)
     if is_tag then
@@ -234,17 +287,18 @@ function RecipePopup:_UpdateReqSection(pool, content, reqs)
     return total_rows
 end
 
-function RecipePopup:_CreateReqSection(name, y_offset)
+function RecipePopup:_CreateReqSection(name, y_offset, view_h)
+    view_h = view_h or REQ_VIEW_H
     local root = self:AddChild(Widget("req_" .. name .. "_root"))
     local root_x = -POPUP_W / 2 + 15
     root:SetPosition(root_x, y_offset)
-    root:SetScissor(-REQ_VIEW_PAD_X, -(REQ_VIEW_H - REQ_VIEW_PAD), REQ_VIEW_W, REQ_VIEW_H)
+    root:SetScissor(-REQ_VIEW_PAD_X, -(view_h - REQ_VIEW_PAD), REQ_VIEW_W, view_h)
 
     local content = root:AddChild(Widget(name .. "_content"))
-    self:_AddViewportBorder(root, -REQ_VIEW_PAD_X + 1, -(REQ_VIEW_H - REQ_VIEW_PAD) + 1, REQ_VIEW_W - 2, REQ_VIEW_H - 2)
+    self:_AddViewportBorder(root, -REQ_VIEW_PAD_X + 1, -(view_h - REQ_VIEW_PAD) + 1, REQ_VIEW_W - 2, view_h - 2)
 
     local scrollbar = self:_MakeScrollbar(name .. "_scrollbar")
-    scrollbar:SetPosition(root_x + REQ_VIEW_W - REQ_VIEW_PAD_X + 3, y_offset - REQ_VIEW_H / 2 + REQ_VIEW_PAD)
+    scrollbar:SetPosition(root_x + REQ_VIEW_W - REQ_VIEW_PAD_X + 3, y_offset - view_h / 2 + REQ_VIEW_PAD)
     self:AddChild(scrollbar)
 
     return { root = root, content = content, pool = {}, scroll = 0, max_rows = 0, scrollbar = scrollbar }
@@ -300,11 +354,15 @@ local function _round1(v) return math.floor((v or 0) * 10 + 0.5) / 10 end
 
 function RecipePopup:ShowForRecipe(data, S, T)
     if data == nil then
+        self.name_icon:Hide()
         self:Hide()
         return
     end
 
     self.name_text:SetString(data.name)
+    local name_w = self.name_text:GetRegionSize()
+    self.name_icon:SetPosition(name_w / 2 + 3, POPUP_H / 2 - 18)
+    self.name_icon:Show()
 
     local stats = string.format(STRINGS.CSP.POPUP_STATS_FMT,
         _round1(data.health), _round1(data.hunger), _round1(data.sanity))

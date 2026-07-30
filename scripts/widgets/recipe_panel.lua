@@ -191,7 +191,7 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
         refresh_range()
     end
 
-    self._recipe_popup = self:AddChild(RecipePopup())
+    self._recipe_popup = self:AddChild(RecipePopup(self._prefs))
     self._recipe_popup:SetPosition(140, 0)
 
     self:RefreshDisplay()
