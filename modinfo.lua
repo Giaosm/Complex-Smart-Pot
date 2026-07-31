@@ -2,7 +2,7 @@
 local isCh = locale and locale:match("^zh")
 
 name = isCh and "复杂智能锅" or "Complex Smart Pot"
-version = "1.1.6"
+version = "1.1.7"
 author = "哇唧唧哇"
 forumthread = ""
 dont_starve_compatible = false
@@ -22,9 +22,10 @@ description = isCh
 4. 配方需求分析：点击料理图标查看食材/标签上下限（再点取消）
 5. 兄弟食材合并：可互换的食材自动合并显示
 6. 可做检测(默认关闭)：根据选中来源检测可制作的料理
-7. 自动做饭(默认关闭)：一键多锅烹饪，可调范围(默认30格)；
+7. 多设备兼容：原版烹饪锅、便携锅、Heap of Foods 酿酒桶、神话书说/登仙炼丹炉等
+8. 自动做饭(默认关闭)：记忆配方、一键多锅烹饪，可调范围(默认30格)；
    点击图标→添加食材→点击做饭保存配方；
-   右键料理图标直接放入该设备烹饪；
+   右键料理图标或详情面板可直接放入当前设备烹饪；
    控制台 ClearAutoCookMemory() 清空记忆]]
 	    or [[Displays the full recipe encyclopedia when opening a cookpot, features:
 1. Browse by category: All, Vanilla, Device, Mod, Buffs, Craftable
@@ -33,9 +34,10 @@ description = isCh
 4. Recipe analysis: click an icon to view ingredient/tag limits (click again to dismiss)
 5. Analog groups: interchangeable ingredients auto-merged
 6. Craft check (off by default): checks craftable recipes from selected source
-7. Auto cook (off by default): one-click multi-pot cooking, adjustable range (default 30);
+7. Multi-device support: cookpot, portable cookpot, Heap of Foods brewer, Myth/Immortal alchemy furnaces, etc.
+8. Auto cook (off by default): recipe memory, one-click multi-pot cooking, adjustable range (default 30);
    Click icon → add ingredients → click cook to save the recipe;
-   Right-click a recipe icon to cook directly in the current device;
+   Right-click a recipe icon or use the details panel to cook directly in the current device;
    Console: ClearAutoCookMemory() to clear all memory]]
 
 local function Subtitle(name_cn, name_en)

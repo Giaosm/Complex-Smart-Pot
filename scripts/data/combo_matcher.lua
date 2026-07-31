@@ -460,4 +460,6 @@ function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_
     return result
 end
 
+ComboMatcher.CheckRecipeByCounts = CheckRecipeByCounts
+
 return ComboMatcher

@@ -1,4 +1,5 @@
--- 配方反推：通过 Proxy 拦截 test 函数，反向推导配方的最小/最大需求
+-- 配方需求分析：通过 Proxy 拦截 test 函数，反向推导配方的最小/最大需求
+-- （原 recipe_detector.lua 整体并入本模块）
 local _DTAG = 0.25
 
 local function ptest(test, names, tags)
@@ -420,28 +421,42 @@ local function FindAnalogGroups(test, simple, allnames, alltags)
     return merged
 end
 
-local Detector = {}
+local Analyzer = {}
 
-function Detector.Detect(test_func, ingredients)
+-- 反推 test 函数的配方需求；ingredients 为设备对应的食材表（cooking.ingredients 或 hof brewingredients）
+function Analyzer.Analyze(test_func, ingredients)
     if type(test_func) ~= "function" then return nil end
     if not ingredients then return nil end
 
-    -- 临时 patch 环境，防止季节条件的短路导致无法分析配方
+    -- 临时 patch 环境，防止季节条件的短路导致无法分析配方。
+    -- 用代理表替换 TheWorld：test 函数读到的 state 四季全真，其余字段透传到真实 TheWorld，
+    -- 完全不写真实 state（旧实现直接改真实 TheWorld.state 的季节标志且从不恢复，是个 bug）
     local old_TheWorld = _G.TheWorld
     local old_SEASONAL_FOOD
     if _G.TUNING then
         old_SEASONAL_FOOD = _G.TUNING.SEASONAL_FOOD
         _G.TUNING.SEASONAL_FOOD = true
     end
-    if not _G.TheWorld then
-        _G.TheWorld = { state = {} }
-    elseif not _G.TheWorld.state then
-        _G.TheWorld.state = {}
+
+    local fake_state = {
+        isspring = true, issummer = true, isautumn = true, iswinter = true,
+    }
+    if old_TheWorld and old_TheWorld.state then
+        -- 未覆盖的 state 字段（如 season、isdusk 等）透传到真实 state
+        setmetatable(fake_state, { __index = old_TheWorld.state })
     end
-    _G.TheWorld.state.isspring = true
-    _G.TheWorld.state.issummer = true
-    _G.TheWorld.state.isautumn = true
-    _G.TheWorld.state.iswinter = true
+    if old_TheWorld then
+        _G.TheWorld = setmetatable({ state = fake_state }, { __index = old_TheWorld })
+    else
+        _G.TheWorld = { state = fake_state }
+    end
+
+    local function restore()
+        _G.TheWorld = old_TheWorld
+        if _G.TUNING then
+            _G.TUNING.SEASONAL_FOOD = old_SEASONAL_FOOD
+        end
+    end
 
     local allnames = {}
     local alltags = {}
@@ -460,20 +475,14 @@ function Detector.Detect(test_func, ingredients)
         SmartSearch(test_func, allnames, alltags)
 
     if not simple then
-        _G.TheWorld = old_TheWorld
-        if _G.TUNING then
-            _G.TUNING.SEASONAL_FOOD = old_SEASONAL_FOOD
-        end
+        restore()
         return nil
     end
 
     local ok = MinimizeRecipe(test_func, simple, allnames, alltags,
                               raw_names, raw_tags, np, tp)
     if not ok then
-        _G.TheWorld = old_TheWorld
-        if _G.TUNING then
-            _G.TUNING.SEASONAL_FOOD = old_SEASONAL_FOOD
-        end
+        restore()
         return nil
     end
 
@@ -520,13 +529,44 @@ function Detector.Detect(test_func, ingredients)
         end
     end
 
-    -- 恢复环境
-    _G.TheWorld = old_TheWorld
-    if _G.TUNING then
-        _G.TUNING.SEASONAL_FOOD = old_SEASONAL_FOOD
-    end
+    restore()
 
     return simple
 end
 
-return Detector
+-- 构建配方的快速筛选索引（_required_types/_required_tags/_min_total）
+function Analyzer.BuildRequirementsIndex(item)
+    local req_types = {}
+    local req_tags = {}
+    local min_total = 0
+
+    local reqs = item.recipe_requirements
+    if reqs then
+        if reqs.minnames then
+            for name, amt in pairs(reqs.minnames) do
+                req_types[name] = true
+                min_total = min_total + amt
+            end
+        end
+        if reqs.analog_groups then
+            for _, group in ipairs(reqs.analog_groups) do
+                local group_amount = group.amount or 1
+                min_total = min_total + group_amount
+                for _, gname in ipairs(group.names) do
+                    req_types[gname] = true
+                end
+            end
+        end
+        if reqs.mintags then
+            for tag, _ in pairs(reqs.mintags) do
+                req_tags[tag] = true
+            end
+        end
+    end
+
+    item._required_types = req_types
+    item._required_tags = req_tags
+    item._min_total = min_total
+end
+
+return Analyzer

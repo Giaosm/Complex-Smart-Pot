@@ -1,53 +1,28 @@
--- 食谱面板：分类按钮、排序、食材监听、实时筛选、背包检测的主 UI 面板
+-- 食谱面板：协调分类/排序按钮列、料理列表、详情弹窗、预览条等子组件，
+-- 并负责容器监听、实时筛选、背包「可做」检测
 local Widget         = require("widgets/widget")
-local Image          = require("widgets/image")
 local ImageButton    = require("widgets/imagebutton")
 local Text           = require("widgets/text")
-local TrueScrollList = require("widgets/truescrolllist")
-local RecipePopup    = require("widgets/recipe_popup")
-local PotPreviewBar  = require("widgets/pot_preview_bar")
+local RecipePopup    = require("ui/recipe_popup")
+local PotPreviewBar  = require("ui/pot_preview_bar")
+local CategoryButtons = require("ui/category_buttons")
+local SortButtons    = require("ui/sort_buttons")
+local RecipeList     = require("ui/recipe_list")
+local L              = require("ui/panel_layout")
 
-local CRAFTING_ATLAS_RESOLVED = resolvefilepath(CRAFTING_ATLAS)
-
-local function SafeSetTexture(img, atlas, tex)
-    if TheSim:AtlasContains(atlas, tex) then
-        img:SetTexture(atlas, tex)
-    else
-        img:SetTexture("images/food_tags.xml", "unknown.tex")
-    end
-end
 local cooking = require("cooking")
-local Scanner = require("inventory_scanner")
+local Scanner = require("inventory/inventory_scanner")
+local Logger = require("debug/logger")
 
 local AutoCook = nil
 local GetStackSize = require("utils/getstacksize")
 
 local function GetAutoCook()
     if not AutoCook then
-        AutoCook = require("auto_cook")
+        AutoCook = require("auto_cook/auto_cook_controller")
     end
     return AutoCook
 end
-
-local SLOT_SIZE      = 64
-local PADDING        = 6
-local ROW_HEIGHT     = SLOT_SIZE + PADDING
-local VISIBLE_ROWS   = 6
-
-local LIST_HEIGHT    = VISIBLE_ROWS * ROW_HEIGHT
-local LIST_WIDTH     = SLOT_SIZE + 12
-
-local BTN_W          = 100
-local BTN_H          = 40
-local BTN_GAP        = 1
-
-local BTN_AREA_W     = BTN_W + 8
-local PANEL_WIDTH    = BTN_AREA_W + 8 + LIST_WIDTH
-local PANEL_HEIGHT   = LIST_HEIGHT
-
-local LIST_X         = PANEL_WIDTH / 2 - LIST_WIDTH / 2 - 4
-local BTN_X          = -PANEL_WIDTH / 2 + BTN_W / 2 + 4
-local LIST_TOP       = PANEL_HEIGHT / 2 - ROW_HEIGHT / 2
 
 local CATEGORIES = {
     { id = "all",        label = STRINGS.CSP.CATEGORY_ALL },
@@ -57,15 +32,8 @@ local CATEGORIES = {
     { id = "buff",       label = STRINGS.CSP.CATEGORY_BUFF },
 }
 
-local SORTERS = {
-    { id = "hunger", label = STRINGS.CSP.SORT_HUNGER, field = "hunger" },
-    { id = "health", label = STRINGS.CSP.SORT_HEALTH, field = "health" },
-    { id = "sanity", label = STRINGS.CSP.SORT_SANITY, field = "sanity" },
-}
-
-local SORT_STATE_NONE = 0
-local SORT_STATE_DESC = 1
-local SORT_STATE_ASC  = 2
+local SORT_STATE_NONE = SortButtons.STATE_NONE
+local SORT_STATE_DESC = SortButtons.STATE_DESC
 
 local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst, backpack_check_mode, auto_cook_source, range_init, prefs, select_mode, debug_logging)
     Widget._ctor(self, "RecipePanel")
@@ -127,8 +95,8 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
     self.btn_root = self:AddChild(Widget("btn_root"))
     self:MakeButtons()
 
-    self.scroll_list = self:AddChild(self:MakeScrollList())
-    self.scroll_list:SetPosition(LIST_X, 0)
+    self.scroll_list = self:AddChild(RecipeList.Create(self))
+    self.scroll_list:SetPosition(L.LIST_X, 0)
 
     if self._enable_auto_cook then
         self._pot_bar = self:AddChild(PotPreviewBar(self._show_memory, function(checked)
@@ -144,8 +112,8 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
                 local idx = self._auto_cook:GetCurrentSlotIndex(self._pending_recipe_name)
                 self._auto_cook:SwitchToRecipeSlot(self._pending_recipe_name, idx + 1)
             end
-        end))
-        self._pot_bar:SetPosition(LIST_X + LIST_WIDTH / 2 - self._pot_bar:GetBarWidth() / 2 - 3, LIST_TOP + 40 + self._pot_bar:GetBarHeight() / 2)
+        end, self._use_quantity_matching))
+        self._pot_bar:SetPosition(L.LIST_X + L.LIST_WIDTH / 2 - self._pot_bar:GetBarWidth() / 2 - 3, L.LIST_TOP + 40 + self._pot_bar:GetBarHeight() / 2)
 
         self._range_arrows = self:AddChild(Widget("range_arrows"))
         local cb_local_x = -50
@@ -206,263 +174,52 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
 end)
 
 function RecipePanel:MakeButtons()
-    local all_btns = {}
+    local entries = {}
     if self._enable_auto_cook then
-        table.insert(all_btns, { type = "dummy", cfg = { label = STRINGS.CSP.BTN_AUTO_COOK } })
+        table.insert(entries, { kind = "auto", label = STRINGS.CSP.BTN_AUTO_COOK })
     end
     for _, cfg in ipairs(CATEGORIES) do
         if cfg.id ~= "mod" or next(self.data.categories["mod"] or {}) then
-            table.insert(all_btns, { type = "cat", cfg = cfg })
+            table.insert(entries, { kind = "cat", id = cfg.id, label = cfg.label })
         end
     end
     if self._backpack_check_mode ~= "off" then
-        table.insert(all_btns, { type = "cat", cfg = { id = "craftable", label = STRINGS.CSP.CATEGORY_CRAFTABLE } })
-    end
-    for _, cfg in ipairs(SORTERS) do
-        table.insert(all_btns, { type = "sort", cfg = cfg })
+        table.insert(entries, { kind = "cat", id = "craftable", label = STRINGS.CSP.CATEGORY_CRAFTABLE })
     end
 
-    local start_y = (BTN_H + BTN_GAP) * (#all_btns - 1) / 2
-    self._cat_btns = {}
-    self._sort_btns = {}
+    -- 按钮列整体竖直居中：分类（含自动做饭）在上、排序在下
+    local total = #entries + #SortButtons.SORTERS
+    local start_y = (L.BTN_H + L.BTN_GAP) * (total - 1) / 2
 
-    for idx, entry in ipairs(all_btns) do
-        local cfg = entry.cfg
-        local btn = self.btn_root:AddChild(ImageButton(
-            "images/global_redux.xml",
-            "button_carny_square_normal.tex",
-            "button_carny_square_hover.tex",
-            "button_carny_square_disabled.tex",
-            "button_carny_square_down.tex"
-        ))
-        btn:ForceImageSize(BTN_W, BTN_H)
-        btn:SetText(cfg.label)
-        btn:SetFont(CHATFONT)
-        btn:SetTextSize(25)
-
-        local y = start_y - (idx - 1) * (BTN_H + BTN_GAP)
-        btn:SetPosition(BTN_X, y)
-
-        if entry.type == "cat" then
-            local function refresh_cat()
-                if self._category == cfg.id then
-                    btn.image:SetTexture("images/global_redux.xml", "button_carny_square_hover.tex")
-                    btn.image:SetTint(1, 1, 1, 1)
-                else
-                    btn.image:SetTexture("images/global_redux.xml", "button_carny_square_normal.tex")
-                    btn.image:SetTint(0.5, 0.5, 0.5, 1)
-                end
-            end
-            btn:SetOnClick(function()
-                self._category = cfg.id
-                self._prefs.category = cfg.id
-                for _, b in ipairs(self._cat_btns) do b.refresh() end
-                self.scroll_list:ResetScroll()
-                self:RefreshDisplay()
-            end)
-            btn.refresh = refresh_cat
-            refresh_cat()
-            table.insert(self._cat_btns, btn)
-        elseif entry.type == "sort" then
-            local function refresh_sort()
-                if self._sort_id == cfg.id then
-                    if self._sort_state == SORT_STATE_DESC then
-                        btn:SetText("▼" .. cfg.label)
-                        btn.image:SetTexture("images/global_redux.xml", "button_carny_square_hover.tex")
-                        btn.image:SetTint(1, 1, 1, 1)
-                    elseif self._sort_state == SORT_STATE_ASC then
-                        btn:SetText("▲" .. cfg.label)
-                        btn.image:SetTexture("images/global_redux.xml", "button_carny_square_hover.tex")
-                        btn.image:SetTint(1, 1, 1, 1)
-                    end
-                else
-                    btn:SetText(cfg.label)
-                    btn.image:SetTexture("images/global_redux.xml", "button_carny_square_normal.tex")
-                    btn.image:SetTint(0.5, 0.5, 0.5, 1)
-                end
-            end
-            btn:SetOnClick(function()
-                if self._sort_id == cfg.id then
-                    if self._sort_state == SORT_STATE_DESC then
-                        self._sort_state = SORT_STATE_ASC
-                    elseif self._sort_state == SORT_STATE_ASC then
-                        self._sort_id = nil
-                        self._sort_state = SORT_STATE_NONE
-                    end
-                else
-                    self._sort_id = cfg.id
-                    self._sort_state = SORT_STATE_DESC
-                end
-                self._prefs.sort_id = self._sort_id
-                self._prefs.sort_state = self._sort_state
-                for _, b in ipairs(self._sort_btns) do b.refresh() end
-                self.scroll_list:ResetScroll()
-                self:RefreshDisplay()
-            end)
-            btn.refresh = refresh_sort
-            refresh_sort()
-            table.insert(self._sort_btns, btn)
-        else
-            self._auto_cook_btn = btn
-            btn:Disable()
-            btn:SetOnClick(function()
-                self._auto_cook:Execute()
-            end)
-        end
-    end
-end
-
-function RecipePanel:MakeScrollList()
-    local scissor_x = -LIST_WIDTH / 2
-    local scissor_y = -PANEL_HEIGHT / 2
-    local scissor_w = LIST_WIDTH
-    local scissor_h = LIST_HEIGHT
-
-    return TrueScrollList(
-        { data = self.data },
-        function(ctx, list_root, scroll_list)
-            local bg_panel = list_root:AddChild(Image("images/global.xml", "square.tex"))
-            bg_panel:SetScale(LIST_WIDTH + 16, LIST_HEIGHT + 16)
-            bg_panel:SetTint(0.18, 0.12, 0.06, 0.85)
-            bg_panel:SetPosition(0, 0)
-            bg_panel:MoveToBack()
-
-            local widgets = {}
-            for i = 1, VISIBLE_ROWS do
-                local w = Widget("recipe_slot_" .. i)
-                local bg = w:AddChild(Image(CRAFTING_ATLAS_RESOLVED, "slot_frame.tex"))
-                bg:SetScale(0.5)
-                w._bg = bg
-
-                local icon = w:AddChild(Image("images/ui.xml", "blank.tex"))
-                icon:SetScale(0.20)
-                w._icon = icon
-
-                local lock = w:AddChild(Image(CRAFTING_ATLAS_RESOLVED, "slot_fg_lock.tex"))
-                lock:SetScale(0.5)
-                w._lock = lock
-
-                local hover = w:AddChild(ImageButton(
-                    "images/ui.xml", "blank.tex", "blank.tex", "blank.tex",
-                    nil, nil, {1, 1}, {0, 0}
-                ))
-                hover.scale_on_focus = false
-                hover.move_on_click = false
-                hover.image:ScaleToSize(SLOT_SIZE + 8, SLOT_SIZE + 8)
-                hover.image:SetTint(0, 0, 0, 0)
-                if self._select_mode == "hover" then
-                    hover:SetOnGainFocus(function()
-                        if w._recipe_data then
-                            if not (self._active_popup_data and self._active_popup_data.prefab == w._recipe_data.prefab) then
-                                self._active_popup_data = w._recipe_data
-                                self._recipe_popup:SetPosition(320, 0)
-                                self._recipe_popup:ShowForRecipe(w._recipe_data, self._S, self._T)
-                                if self._enable_auto_cook and self._on_dish_click then
-                                    self._on_dish_click(w._recipe_data.prefab)
-                                    self.scroll_list:RefreshView()
-                                end
-                            end
-                        end
-                    end)
-                    hover:SetOnClick(function()
-                        if w._recipe_data then
-                            if self._active_popup_data and self._active_popup_data.prefab == w._recipe_data.prefab then
-                                self._recipe_popup:Hide()
-                                self._active_popup_data = nil
-                                if self._on_dish_click then
-                                    self._on_dish_click(nil)
-                                end
-                            end
-                        end
-                    end)
-                else
-                    hover:SetOnClick(function()
-                        if w._recipe_data then
-                            if self._active_popup_data and self._active_popup_data.prefab == w._recipe_data.prefab then
-                                self._recipe_popup:Hide()
-                                self._active_popup_data = nil
-                                if self._on_dish_click then
-                                    self._on_dish_click(nil)
-                                end
-                            else
-                                self._active_popup_data = w._recipe_data
-                                self._recipe_popup:SetPosition(320, 0)
-                                self._recipe_popup:ShowForRecipe(w._recipe_data, self._S, self._T)
-                                if self._enable_auto_cook and self._on_dish_click then
-                                    self._on_dish_click(w._recipe_data.prefab)
-                                    self.scroll_list:RefreshView()
-                                end
-                            end
-                        end
-                    end)
-                end
-                if self._on_right_click then
-                    local base_on_control = hover.OnControl
-                    hover.OnControl = function(self_btn, control, down)
-                        if control == CONTROL_SECONDARY and not down and w._recipe_data then
-                            self._on_right_click(w._recipe_data.prefab)
-                            return true
-                        end
-                        return base_on_control(self_btn, control, down)
-                    end
-                end
-                w:SetPosition(0, LIST_TOP - (i - 1) * ROW_HEIGHT)
-                list_root:AddChild(w)
-                table.insert(widgets, w)
-            end
-            return widgets, 1, ROW_HEIGHT, VISIBLE_ROWS, 1
+    self._cat_buttons = self.btn_root:AddChild(CategoryButtons({
+        entries = entries,
+        current = self._category,
+        start_y = start_y,
+        on_select = function(id)
+            self._category = id
+            self._prefs.category = id
+            self._cat_buttons:SetCurrent(id)
+            self.scroll_list:ResetScroll()
+            self:RefreshDisplay()
         end,
-        function(ctx, widget, data, index)
-            local icon = widget._icon
-            if data ~= nil then
-                SafeSetTexture(icon, data.food_atlas, data.food_tex)
-                local tex_w, tex_h = icon:GetSize()
-                local scale = (SLOT_SIZE - 2) / math.max(tex_w, tex_h)
-                icon:SetScale(scale)
-                widget:Show()
-
-                local is_highlighted = self._highlighted_recipes ~= nil
-                    and self._highlighted_recipes[data.prefab]
-                if is_highlighted then
-                    widget._bg:SetTexture(CRAFTING_ATLAS_RESOLVED, "slot_bg_buffered.tex")
-                else
-                    widget._bg:SetTexture(CRAFTING_ATLAS_RESOLVED, "slot_frame.tex")
-                end
-
-                local is_available = true
-                if self._cooker ~= nil and self._cooker_recipes ~= nil then
-                    is_available = self._cooker_recipes[data.prefab] ~= nil
-                end
-
-                if is_highlighted then
-                    icon:SetTint(1, 1, 1, 1)
-                    widget._bg:SetTint(1, 1, 1, 1)
-                    widget._lock:Hide()
-                elseif is_available then
-                    local has_backpack = self._backpack_recipes ~= nil
-                        and self._backpack_recipes[data.prefab]
-                    if has_backpack then
-                        icon:SetTint(1, 1, 1, 1)
-                        widget._bg:SetTint(1, 1, 1, 1)
-                    else
-                        icon:SetTint(0.25, 0.25, 0.25, 1)
-                        widget._bg:SetTint(0.5, 0.45, 0.35, 1)
-                    end
-                    widget._lock:Hide()
-                else
-                    icon:SetTint(0.1, 0.1, 0.1, 1)
-                    widget._bg:SetTint(0.3, 0.25, 0.15, 1)
-                    widget._lock:Show()
-                end
-                icon:Show()
-                widget._recipe_data = data
-            else
-                widget:Hide()
-            end
+        on_auto_cook = function()
+            self._auto_cook:Execute()
         end,
-        scissor_x, scissor_y, scissor_w, scissor_h,
-        14, -ROW_HEIGHT, 1
-    )
+    }))
+
+    self._sort_buttons = self.btn_root:AddChild(SortButtons({
+        current_id = self._sort_id,
+        current_state = self._sort_state,
+        start_y = start_y - #entries * (L.BTN_H + L.BTN_GAP),
+        on_change = function(id, state)
+            self._sort_id = id
+            self._sort_state = state
+            self._prefs.sort_id = id
+            self._prefs.sort_state = state
+            self.scroll_list:ResetScroll()
+            self:RefreshDisplay()
+        end,
+    }))
 end
 
 function RecipePanel:_BuildRawList()
@@ -540,7 +297,7 @@ function RecipePanel:RefreshDisplay()
 
     if self._sort_id ~= nil and self._sort_state ~= SORT_STATE_NONE then
         local field = nil
-        for _, s in ipairs(SORTERS) do
+        for _, s in ipairs(SortButtons.SORTERS) do
             if s.id == self._sort_id then
                 field = s.field
                 break
@@ -579,8 +336,8 @@ function RecipePanel:RefreshDisplay()
         self._scroll_to_prefab = nil
         for i, v in ipairs(items) do
             if v.prefab == target then
-                local max_row = math.max(1, #items - VISIBLE_ROWS + 1)
-                local target_row = math.max(1, math.min(i - math.floor(VISIBLE_ROWS / 2), max_row))
+                local max_row = math.max(1, #items - L.VISIBLE_ROWS + 1)
+                local target_row = math.max(1, math.min(i - math.floor(L.VISIBLE_ROWS / 2), max_row))
                 self.scroll_list:ScrollToScrollPos(target_row)
                 break
             end
@@ -605,8 +362,8 @@ function RecipePanel:RefreshDisplay()
             else
                 self._recipe_popup:_UpdateCraftView()
             end
-            local max_row = math.max(1, #items - VISIBLE_ROWS + 1)
-            local target_row = math.max(1, math.min(current_idx - math.floor(VISIBLE_ROWS / 2), max_row))
+            local max_row = math.max(1, #items - L.VISIBLE_ROWS + 1)
+            local target_row = math.max(1, math.min(current_idx - math.floor(L.VISIBLE_ROWS / 2), max_row))
             self.scroll_list:ScrollToScrollPos(target_row)
         else
             self._recipe_popup:Hide()
@@ -615,12 +372,8 @@ function RecipePanel:RefreshDisplay()
 end
 
 function RecipePanel:SetAutoCookEnabled(enabled)
-    if not self._auto_cook_btn then return end
-    if enabled then
-        self._auto_cook_btn:Enable()
-    else
-        self._auto_cook_btn:Disable()
-    end
+    if not self._cat_buttons then return end
+    self._cat_buttons:SetAutoCookEnabled(enabled)
 end
 
 function RecipePanel:ScrollToRecipe(prefab)
@@ -716,9 +469,8 @@ function RecipePanel:SetCooker(cooker_prefab, is_brewer)
                 if next(self._cooker_recipes) == nil and TUNING and TUNING.MYTH_PILL_RECIPES then
                     self._cooker_recipes = TUNING.MYTH_PILL_RECIPES
                 end
-                if self.data and self.data._CollectMythRecipes then
-                    self.data:_CollectMythRecipes()
-                end
+                -- 神话数据可能延迟就绪，通知数据层补收集
+                self.data:EnsureCollected("alchmy_fur")
                 self._myth_ingredients = {}
                 for _, recipe_def in pairs(self._cooker_recipes) do
                     if recipe_def.recipe then
@@ -732,9 +484,8 @@ function RecipePanel:SetCooker(cooker_prefab, is_brewer)
                 if next(self._cooker_recipes) == nil and TUNING and TUNING.XD_PILL_RECIPES then
                     self._cooker_recipes = TUNING.XD_PILL_RECIPES[cooker_prefab] or {}
                 end
-                if self.data and self.data._CollectXdRecipes then
-                    self.data:_CollectXdRecipes()
-                end
+                -- 登仙数据可能延迟就绪，通知数据层补收集
+                self.data:EnsureCollected(cooker_prefab)
                 self._xd_ingredients = {}
                 for _, recipe_def in pairs(self._cooker_recipes) do
                     if recipe_def.recipe then
@@ -757,7 +508,7 @@ function RecipePanel:SetCooker(cooker_prefab, is_brewer)
                 for k, v in pairs(cooking.ingredients) do
                     self._cached_device_ingredients[k] = v
                 end
-                for alias, _ in pairs(self.data._ingredient_aliases) do
+                for alias, _ in pairs(self.data:GetIngredientAliases()) do
                     self._cached_device_ingredients[alias] = true
                 end
             end
@@ -840,42 +591,11 @@ function RecipePanel:_RefreshBackpackRecipes()
         fixed_counts[prefab] = (fixed_counts[prefab] or 0) + 1
     end
 
-    local bag_counts = {}
-    local raw_counts = {}
-    if self._backpack_check_mode ~= "fridge" then
-        bag_counts = Scanner.CountIngredients(inv:GetItems(), max_per_type, self._cached_device_ingredients, nil, raw_counts)
-    end
-
-    local active_item = inv:GetActiveItem()
-    if active_item and active_item.prefab and self._cached_device_ingredients and self._cached_device_ingredients[active_item.prefab] then
-        local count = GetStackSize(active_item)
-        bag_counts[active_item.prefab] = math.min((bag_counts[active_item.prefab] or 0) + count, max_per_type)
-        raw_counts[active_item.prefab] = (raw_counts[active_item.prefab] or 0) + count
-    end
-
-    local open_containers = inv:GetOpenContainers() or {}
-    for container_inst, _ in pairs(open_containers) do
-        if container_inst ~= self._container then
-            local container = container_inst.replica and container_inst.replica.container
-            if container then
-                local is_backpack = container_inst:HasTag("INLIMBO")
-                local is_fridge = container_inst.prefab == "icebox" or container_inst.prefab == "saltbox"
-
-                local should_scan = false
-                if self._backpack_check_mode == "backpack_and_inv" then
-                    should_scan = is_backpack
-                elseif self._backpack_check_mode == "all" then
-                    should_scan = true
-                elseif self._backpack_check_mode == "fridge" or self._backpack_check_mode == "fridge_and_inv" then
-                    should_scan = is_fridge
-                end
-
-                if should_scan then
-                    Scanner.CountIngredients(container:GetItems(), max_per_type, self._cached_device_ingredients, bag_counts, raw_counts)
-                end
-            end
-        end
-    end
+    -- 库存/容器扫描已统一收口到 inventory_scanner（语义见重构待办第六节行为矩阵）
+    local bag_counts, raw_counts = Scanner.CountIngredientsForMode(
+        self._player_inst, self._backpack_check_mode, max_per_type,
+        self._cached_device_ingredients, self._container
+    )
 
     if next(bag_counts) == nil then
 	self._backpack_recipes = nil
@@ -911,20 +631,8 @@ function RecipePanel:_RefreshBackpackRecipes()
 	    self._backpack_recipes = self.data:GetMatchingRecipesFromCounts(self._cooker, bag_counts, fixed_counts, self._cooker_recipes, self._max_slots, self._brewing_ingredients, pot_counts, self._use_quantity_matching)
 	end
 
-        if self._debug_logging then
-            local dbg_items = {}
-            for k, v in pairs(bag_counts) do table.insert(dbg_items, k .. "=" .. v) end
-            table.sort(dbg_items)
-            print(string.format("[智能锅] slots=%d qmatch=%s mode=%s scan(%d)",
-                self._max_slots, tostring(self._use_quantity_matching), tostring(self._backpack_check_mode), #dbg_items))
-            print("  [" .. table.concat(dbg_items, "、") .. "]")
-            if self._backpack_recipes then
-                local dbg_rec = {}
-                for k, _ in pairs(self._backpack_recipes) do table.insert(dbg_rec, k) end
-                table.sort(dbg_rec)
-                print("[智能锅] 可做料理(" .. #dbg_rec .. "): [" .. table.concat(dbg_rec, "、") .. "]")
-            end
-        end
+        Logger.LogScanResult(self._max_slots, self._use_quantity_matching, self._backpack_check_mode, bag_counts)
+        Logger.LogMatchResult(self._backpack_recipes)
         -- 可做分类还需检查槽位容量：缺的材料种类数不能超过剩余格子
         -- 防止丹药类配方 bag_have 补充后数量够但格子不够装的情况
         if self._backpack_recipes and self._possible_recipes then
@@ -953,7 +661,7 @@ function RecipePanel:SetPotIngredients(prefab_list, cooker)
                 prefab_list,
                 self._brewing_ingredients,
                 self._max_slots,
-                self._is_brewer and self.data._brewer_max_tag_values or nil,
+                self._is_brewer and self.data:GetMaxTagValues("brewer") or nil,
                 self._cached_pot_counts,
                 self._use_quantity_matching
             )
@@ -1123,7 +831,9 @@ end
 -- 返回指定料理的具体食材组合（用于弹窗"可做配方"视图）
 function RecipePanel:GetCraftableCombinations(recipe_item)
     if not recipe_item then return nil end
-    return self.data:GetRecipeCraftableCombos(
+    Logger.Logf("[智能锅] GetCraftableCombinations: recipe=%s qmatch=%s max_slots=%d",
+        recipe_item.prefab, tostring(self._use_quantity_matching), self._max_slots or 4)
+    local r = self.data:GetRecipeCraftableCombos(
         recipe_item,
         self._cached_bag_counts,
         self._cached_pot_counts,
@@ -1133,6 +843,9 @@ function RecipePanel:GetCraftableCombinations(recipe_item)
         self._cached_bag_counts_raw,
         self._cached_sorted_defs
     )
+    Logger.Logf("[智能锅] GetCraftableCombinations 返回: recipe=%s result=%s",
+        recipe_item.prefab, r and ("count=" .. #r) or "nil")
+    return r
 end
 
 return RecipePanel

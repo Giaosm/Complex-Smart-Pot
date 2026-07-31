@@ -1,4 +1,6 @@
 -- 任务队列：劫持玩家操作，支持任意按键中止，用于自动做饭流程控制
+-- 注意：全局只应存在一个实例（由 auto_cook_controller 的 GetSharedTaskQueue 保证），
+-- 否则多个实例各自包装 playercontroller.OnControl，销毁时会互相拆掉对方的包装链
 local id_push_thread = "task_queue_push_thread"
 
 local Mouse_controls = {

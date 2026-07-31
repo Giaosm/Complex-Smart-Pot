@@ -12,10 +12,12 @@ local SLOT_GAP = 6
 local SLOT_PAD = 4
 local CHECKBOX_SIZE = 36
 
-local PotPreviewBar = Class(Widget, function(self, initial_checked, on_toggle, on_up, on_down)
+local PotPreviewBar = Class(Widget, function(self, initial_checked, on_toggle, on_up, on_down, use_quantity)
     Widget._ctor(self, "PotPreviewBar")
 
     self._checked = initial_checked or false
+    self._use_quantity = use_quantity == true
+    self._current_ingredients = nil
     self._on_toggle = on_toggle
 
     local slot_area_w = 4 * SLOT_VISUAL + 3 * SLOT_GAP + SLOT_PAD * 2
@@ -30,14 +32,19 @@ local PotPreviewBar = Class(Widget, function(self, initial_checked, on_toggle, o
     bg:MoveToBack()
 
     self._slot_icons = {}
+    self._slot_counts = {}
     local slot_area_x = -self._total_w / 2
     for i = 1, 4 do
         local slot = self._bar_root:AddChild(Widget("slot_" .. i))
         slot:AddChild(Image(CRAFTING_ATLAS_RESOLVED, "slot_frame.tex")):SetScale(0.5)
         local icon = slot:AddChild(Image("images/ui.xml", "blank.tex"))
         icon:SetScale(0.90)
+        local count = slot:AddChild(Text(NUMBERFONT, 18))
+        count:SetPosition(0, -SLOT_VISUAL / 2 + 6)
+        count:Hide()
         slot:SetPosition(slot_area_x + SLOT_PAD + SLOT_VISUAL / 2 + (i - 1) * (SLOT_VISUAL + SLOT_GAP), 0)
         table.insert(self._slot_icons, icon)
+        table.insert(self._slot_counts, count)
     end
 
     local arrow_size = 32
@@ -110,22 +117,56 @@ function PotPreviewBar:SetSlotLabel(text)
     end
 end
 
-function PotPreviewBar:UpdateSlots(ingredients)
-    for i = 1, 4 do
-        local icon = self._slot_icons[i]
-        if not icon then break end
-        icon:SetTexture("images/ui.xml", "blank.tex")
+function PotPreviewBar:UpdateSlots(ingredients, use_quantity)
+    self._current_ingredients = ingredients
+    self._current_use_quantity = use_quantity
+
+    local quantity_mode = use_quantity
+    if quantity_mode == nil then
+        quantity_mode = self._use_quantity
+    end
+
+    -- 普通设备：每个 slot 显示一种食材，不堆叠数量
+    -- 可堆叠设备：按食材种类压缩，同一食材可能占多个 slot，这里按种类显示数量
+    local slots = {}
+    if ingredients then
+        if quantity_mode then
+            local counts = {}
+            for _, ing in ipairs(ingredients) do
+                local prefab = type(ing) == "table" and ing.prefab or ing
+                counts[prefab] = (counts[prefab] or 0) + (type(ing) == "table" and ing.count or 1)
+            end
+            for prefab, count in pairs(counts) do
+                table.insert(slots, { prefab = prefab, count = count })
+            end
+            table.sort(slots, function(a, b) return a.prefab < b.prefab end)
+        else
+            for _, ing in ipairs(ingredients) do
+                table.insert(slots, { prefab = type(ing) == "table" and ing.prefab or ing, count = 1 })
+            end
+        end
     end
 
     for i = 1, 4 do
         local icon = self._slot_icons[i]
+        local count_label = self._slot_counts[i]
         if not icon then break end
 
-        if ingredients and ingredients[i] then
-            local prefab = ingredients[i]
-            local tex, atlas, _ = ResolveInventoryItemAssets(prefab)
+        local data = slots[i]
+        if data then
+            local tex, atlas, _ = ResolveInventoryItemAssets(data.prefab)
             icon:SetTexture(atlas, tex)
             icon:SetTint(1, 1, 1, 1)
+            if data.count > 1 then
+                count_label:SetString("*" .. data.count)
+                count_label:SetColour(0.9, 0.9, 0.2, 1)
+                count_label:Show()
+            else
+                count_label:Hide()
+            end
+        else
+            icon:SetTexture("images/ui.xml", "blank.tex")
+            count_label:Hide()
         end
     end
 end

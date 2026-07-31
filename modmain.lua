@@ -1,4 +1,5 @@
--- 模组入口：Hook 容器开关、创建/销毁 RecipePanel、管理自动做饭记忆
+-- 模组入口：初始化顺序、配置读取、Hook 注册与事件转发；具体逻辑见各子模块
+-- 注意：游戏不会给模组 env 安装元表，下面这行是 modmain 内裸名访问 _G 全局（STRINGS/TUNING/json 等）的前提
 GLOBAL.setmetatable(env, { __index = function(t, k) return GLOBAL.rawget(GLOBAL, k) end })
 
 Assets = Assets or {}
@@ -10,13 +11,30 @@ table.insert(Assets, Asset("IMAGE", "images/food_types.tex"))
 require "ingredienttags"
 require "foodatlas"
 
+local Config = require("config/config_manager")
+
+-- 集中读取全部配置（GetModConfigData 只能在 modmain 直接调用），统一交给 config_manager
+Config.Setup({
+    language               = GetModConfigData("language"),
+    enable_auto_cook       = GetModConfigData("enable_auto_cook"),
+    enable_backpack_check  = GetModConfigData("enable_backpack_check"),
+    recipe_select_behavior = GetModConfigData("recipe_select_behavior"),
+    enable_hof_compat      = GetModConfigData("enable_hof_compat"),
+    enable_myth_compat     = GetModConfigData("enable_myth_compat"),
+    enable_xd_compat       = GetModConfigData("enable_xd_compat"),
+    max_render_combos      = GetModConfigData("max_render_combos"),
+    show_viewport_border   = GetModConfigData("show_viewport_border"),
+    enable_debug_logging   = GetModConfigData("enable_debug_logging"),
+})
+
+-- 语言包必须先于任何 UI 模块加载：UI 模块顶层即读取 STRINGS.CSP 常量
 local _language_map = {
     zh = "cn",  zhr = "cn", zht = "cn",
     ch = "cn",  chs = "cn", sc = "cn", chinese = "cn",
     ru = "ru",  russian = "ru",
 }
 local function LoadLanguage()
-    local lang = GetModConfigData("language")
+    local lang = Config.GetLanguage()
     if lang == "auto" then
         lang = _language_map[_G.LanguageTranslator and _G.LanguageTranslator.defaultlang] or "en"
     end
@@ -27,310 +45,66 @@ local function LoadLanguage()
 end
 LoadLanguage()
 
-local ContainerDetector = require("container_detector")
-local CookbookData = require("cookbook_data")
-local RecipePanel  = require("widgets/recipe_panel")
+local ContainerDetector = require("container/container_detector")
+local CookbookData = require("data/cookbook_data")
+local PanelManager = require("ui/recipe_panel_manager")
 
 local g_cookbook_data = CookbookData()
-local enable_hof_compat = GetModConfigData("enable_hof_compat")
-local enable_myth_compat = GetModConfigData("enable_myth_compat")
-local enable_xd_compat = GetModConfigData("enable_xd_compat")
-local show_viewport_border = GetModConfigData("show_viewport_border")
-GLOBAL.CSP_SHOW_VIEWPORT_BORDER = show_viewport_border
-local enable_debug_logging = GetModConfigData("enable_debug_logging")
-GLOBAL.CSP_DEBUG_LOGGING = enable_debug_logging
-local max_render_combos = GetModConfigData("max_render_combos") or 100
-GLOBAL.CSP_MAX_RENDER_COMBOS = max_render_combos
-
--- 缓存配置值，避免在 CreateRecipePanel 中重复获取
-local local_enable_backpack = GetModConfigData("enable_backpack_check")
-local local_auto_cook_source = GetModConfigData("enable_auto_cook")
-local local_select_mode = GetModConfigData("recipe_select_behavior") or "click"
+PanelManager.Setup(g_cookbook_data)
 
 AddSimPostInit(function()
     g_cookbook_data:Collect()
 end)
 
-local recipe_panels = {}
-
-local panel_prefs = { category = "all", sort_id = nil, sort_state = 0 }
-
-local memory_data = {}
-
-local function LoadMemoryData()
-    local str = TheSim:GetSetting("complex_smart_pot", "memory")
-    if str and str ~= "" then
-        local ok, data = pcall(json.decode, str)
-        if ok and type(data) == "table" then
-            return data
-        end
-    end
-    return {}
-end
-
-local function SaveMemoryData()
-    memory_data._panel_prefs = panel_prefs
-    local ok, str = pcall(json.encode, memory_data)
-    if ok then
-        TheSim:SetSetting("complex_smart_pot", "memory", str)
-    end
-end
-
-AddSimPostInit(function()
-    memory_data = LoadMemoryData()
-    if memory_data._panel_prefs then
-        panel_prefs = memory_data._panel_prefs
-        memory_data._panel_prefs = nil
-    end
-end)
-
-local function ClearAutoCookMemory()
-    memory_data = {}
-    SaveMemoryData()
-    if ThePlayer and ThePlayer.HUD then
-        for container, panel in pairs(recipe_panels) do
-            if panel and panel._auto_cook then
-                panel._auto_cook:RestoreRecipeMemories(nil)
-                panel._auto_cook._memory = nil
-                panel._auto_cook._active_recipe = nil
-                panel._pending_recipe_name = nil
-                if panel._pot_bar then
-                    panel._pot_bar:UpdateSlots(nil)
-                end
-                panel._auto_cook:_UpdatePotBarLabel()
-            end
-        end
-    end
+-- 控制台命令：清空自动做饭配方记忆
+_G.ClearAutoCookMemory = function()
+    PanelManager.ClearAllAutoCookMemory()
     print(STRINGS.CSP.MEMORY_CLEARED)
 end
-_G.ClearAutoCookMemory = ClearAutoCookMemory
 
+-- 控制台命令：设置弹窗「可做配方」最大渲染组合数
 _G.SetMaxRenderCombos = function(n)
-    n = tonumber(n) or 0
-    GLOBAL.CSP_MAX_RENDER_COMBOS = math.max(0, n)
-    print(STRINGS.CSP.COMBO_LIMIT_SET .. tostring(GLOBAL.CSP_MAX_RENDER_COMBOS))
+    Config.SetMaxRenderCombos(n)
+    print(STRINGS.CSP.COMBO_LIMIT_SET .. tostring(Config.GetMaxRenderCombos()))
 end
 
-local function CreateRecipePanel(hud, container, is_brewer)
-    if recipe_panels[container] ~= nil then
-        return recipe_panels[container]
-    end
-
-    local containerwidget = hud.controls ~= nil
-            and hud.controls.containers ~= nil
-            and hud.controls.containers[container]
-    if containerwidget == nil then
-        return nil
-    end
-
-    local parent = containerwidget:GetParent()
-    if parent == nil then
-        return nil
-    end
-
-    local enable_backpack = local_enable_backpack
-	if enable_backpack == true then enable_backpack = "inv" end
-	if enable_backpack == false then enable_backpack = "off" end
-	local auto_cook_source = local_auto_cook_source
-	local range_init = auto_cook_source ~= "off" and (memory_data._range_search or 30) or nil
-	local select_mode = local_select_mode
-	local debug_logging = enable_debug_logging
-	local panel = RecipePanel(g_cookbook_data, { strings = STRINGS, tuning = TUNING }, hud.owner, enable_backpack, auto_cook_source, range_init, panel_prefs, select_mode, debug_logging)
-    parent:AddChild(panel)
-    local pos = containerwidget:GetPosition()
-    panel:SetPosition(pos.x + 100, pos.y)
-    panel:SetCooker(container.prefab, is_brewer)
-    panel:SetAcceptsStacksFromContainer(container)
-    panel:StartMonitor(container)
-
-    if auto_cook_source ~= "off" and panel._auto_cook then
-	    local recipe_map = memory_data._recipe_memories
-        if type(recipe_map) == "table" then
-            panel._auto_cook:RestoreRecipeMemories(recipe_map)
-            local active_name = memory_data._active_recipe
-            if active_name then
-                panel._auto_cook:SwitchToRecipe(active_name)
-                panel:ScrollToRecipe(active_name)
-            end
-        end
-
-        panel._auto_cook:SetSaveCallback(function()
-            memory_data._range_search = panel._auto_cook:GetRangeSearch()
-            SaveMemoryData()
-        end)
-
-        panel._auto_cook:SetRecipeMemorySaveCallback(function(recipe_name, mem)
-            if not memory_data._recipe_memories then
-                memory_data._recipe_memories = {}
-            end
-            memory_data._recipe_memories[recipe_name] = mem
-            memory_data._active_recipe = recipe_name
-            SaveMemoryData()
-        end)
-
-        panel._on_dish_click = function(recipe_name)
-            panel._pending_recipe_name = recipe_name
-            if recipe_name and panel._cooker_recipes and panel._cooker_recipes[recipe_name] then
-                panel:SetAutoCookEnabled(true)
-                memory_data._active_recipe = recipe_name
-                SaveMemoryData()
-                panel._auto_cook:SwitchToRecipe(recipe_name)
-            else
-                panel:SetAutoCookEnabled(false)
-                panel._auto_cook._memory = nil
-                panel._auto_cook._active_recipe = nil
-                if panel._pot_bar then
-                    panel._pot_bar:UpdateSlots(nil)
-                end
-                panel._auto_cook:_UpdatePotBarLabel()
-            end
-        end
-    end
-
-    local rep = container.replica and container.replica.container
-    local btn = rep and rep:GetWidget() and rep:GetWidget().buttoninfo
-    if btn and btn.fn then
-        if auto_cook_source ~= "off" then
-            panel._auto_cook:SetStewerFn(container.prefab, btn.fn)
-        end
-
-        local orig_fn = btn.fn
-        btn.fn = function(ent, ...)
-            if auto_cook_source ~= "off" and ent and ent.replica and ent.replica.container then
-                local c = ent.replica.container
-                local prefab_data = {}
-                local has_empty_slot
-                for i = 1, c:GetNumSlots() do
-                    local item = c:GetItemInSlot(i)
-                    local p = item and item.prefab
-                    if p then
-                        table.insert(prefab_data, p)
-                    else
-                        has_empty_slot = true
-                        break
-                    end
-                end
-                if not has_empty_slot then
-                    if panel._pending_recipe_name then
-                        if panel._cooker_recipes and panel._cooker_recipes[panel._pending_recipe_name] then
-                            panel._auto_cook:SaveRecipeMemory(panel._pending_recipe_name, prefab_data)
-                        end
-                    end
-                    panel._pending_recipe_name = nil
-                end
-            end
-            return orig_fn(ent, ...)
-        end
-    end
-
-    recipe_panels[container] = panel
-    return panel
-end
-
-local function DestroyRecipePanel(container)
-    local panel = recipe_panels[container]
-    if panel ~= nil then
-        panel:StopMonitor()
-        panel._pending_recipe_name = nil
-        if panel._auto_cook and panel._auto_cook._task_queue then
-            panel._auto_cook._task_queue:Destroy()
-        end
-        panel:Kill()
-        recipe_panels[container] = nil
-        SaveMemoryData()
-        return true
-    end
-    return false
-end
-
+-- 面板打开期间屏蔽相机缩放（防止误触滚轮改变视角）
 AddClassPostConstruct("cameras/followcamera", function(self)
     local _ZoomIn = self.ZoomIn
     self.ZoomIn = function(self, ...)
-        if next(recipe_panels) then return end
+        if PanelManager.HasPanels() then return end
         return _ZoomIn(self, ...)
     end
     local _ZoomOut = self.ZoomOut
     self.ZoomOut = function(self, ...)
-        if next(recipe_panels) then return end
+        if PanelManager.HasPanels() then return end
         return _ZoomOut(self, ...)
     end
 end)
 
-local ext_container_listeners = {}
-
-local notify_debounce_task = nil
-local function NotifyAllPanels()
-    if notify_debounce_task then return end
-    if not ThePlayer then
-        for _, panel in pairs(recipe_panels) do
-            if panel.MarkBackpackDirty then
-                panel:MarkBackpackDirty()
-                panel:RefreshDisplay()
-            end
-        end
-        return
-    end
-    notify_debounce_task = ThePlayer:DoTaskInTime(0.15, function()
-        notify_debounce_task = nil
-        for _, panel in pairs(recipe_panels) do
-            if panel.MarkBackpackDirty then
-                panel:MarkBackpackDirty()
-                panel:RefreshDisplay()
-            end
-        end
-    end)
-end
-
-local function BindExtContainer(container)
-    if not container or not container.prefab then return end
-    if ext_container_listeners[container] then return end
-
-    local cb = function()
-        NotifyAllPanels()
-    end
-
-    container:RemoveEventCallback("itemget", cb)
-    container:ListenForEvent("itemget", cb)
-    container:RemoveEventCallback("itemlose", cb)
-    container:ListenForEvent("itemlose", cb)
-
-    ext_container_listeners[container] = {cb = cb}
-end
-
-local function UnbindExtContainer(container)
-    local entry = ext_container_listeners[container]
-    if not entry then return end
-    container:RemoveEventCallback("itemget", entry.cb)
-    container:RemoveEventCallback("itemlose", entry.cb)
-    ext_container_listeners[container] = nil
-end
-
+-- 容器开关 Hook：烹饪设备开面板，其余容器绑定变化通知
+-- 设备类型判定统一走 ContainerDetector.Match（配置表驱动，新增设备类型无需改这里）
 AddClassPostConstruct("screens/playerhud", function(self)
     local _OpenContainer = self.OpenContainer
     self.OpenContainer = function(self, container, side)
         _OpenContainer(self, container, side)
 
-        if ContainerDetector.IsCookpot(container) then
-            CreateRecipePanel(self, container, false)
-        elseif ContainerDetector.IsBrewer(container, enable_hof_compat) then
-            CreateRecipePanel(self, container, true)
-        elseif ContainerDetector.IsMyth(container, enable_myth_compat) then
-            CreateRecipePanel(self, container, false)
-        elseif ContainerDetector.IsXd(container, enable_xd_compat) then
-            CreateRecipePanel(self, container, false)
+        local device = ContainerDetector.Match(container)
+        if device then
+            PanelManager.CreatePanel(self, container, device.is_brewer)
         else
-            BindExtContainer(container)
-            NotifyAllPanels()
+            PanelManager.BindExtContainer(container)
+            PanelManager.NotifyAll()
         end
     end
 
     local _CloseContainer = self.CloseContainer
     self.CloseContainer = function(self, container, side)
-        if ContainerDetector.IsCookpot(container) or ContainerDetector.IsBrewer(container, enable_hof_compat) or ContainerDetector.IsMyth(container, enable_myth_compat) or ContainerDetector.IsXd(container, enable_xd_compat) then
-            DestroyRecipePanel(container)
+        if ContainerDetector.Match(container) then
+            PanelManager.DestroyPanel(container)
         else
-            UnbindExtContainer(container)
-            NotifyAllPanels()
+            PanelManager.UnbindExtContainer(container)
+            PanelManager.NotifyAll()
         end
         _CloseContainer(self, container, side)
     end
