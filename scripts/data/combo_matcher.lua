@@ -66,7 +66,7 @@ local function PrefilterRecipe(item, bag_counts, fixed_counts, pot_counts)
     return false
 end
 
--- 用数量向量直接检查一个料理是否可被满足（用于可堆叠设备）
+-- 用数量向量直接检查一个料理是否可被满足（用于可堆叠或高数量需求设备）
 local function CheckRecipeByCounts(item, names, tags, counts, ingredients)
     local reqs = item.recipe_requirements
     if not reqs then
@@ -145,7 +145,7 @@ local function CheckRecipeByCounts(item, names, tags, counts, ingredients)
     return true
 end
 
--- 按数量向量判断（用于炼丹炉/酿酒桶等需要特定数量×N 的设备）。
+-- 按数量向量判断（用于炼丹炉等可堆叠、单个 slot 可放多份同种食材的设备）。
 -- 一个 slot 可以放多个同种食材，不需要枚举 slot 分配，
 -- 而是判断能否从 bag+pot 中选出一份满足 min 需求、不超过 max 限制的输入。
 local function MatchByQuantity(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts)

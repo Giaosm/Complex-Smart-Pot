@@ -39,6 +39,34 @@ local function IGetElement(tbl, fn)
     end
 end
 
+-- 校验食材列表是否适合当前设备槽位规则
+-- 普通设备：食材数量必须严格等于槽位数
+-- 特殊设备（如炼丹炉）：总数量可超过槽位，但不同种类数不能超过槽位
+local function ValidateIngredientsForCooker(ingredients, max_slots, use_quantity)
+    if not ingredients or #ingredients == 0 then
+        return false, "empty"
+    end
+    if not use_quantity then
+        if #ingredients ~= max_slots then
+            return false, "slot_mismatch", #ingredients, max_slots
+        end
+    else
+        local distinct = {}
+        local distinct_count = 0
+        for _, ing in ipairs(ingredients) do
+            local name = type(ing) == "table" and ing.prefab or ing
+            if not distinct[name] then
+                distinct[name] = true
+                distinct_count = distinct_count + 1
+            end
+        end
+        if distinct_count > max_slots then
+            return false, "too_many_types", distinct_count, max_slots
+        end
+    end
+    return true
+end
+
 -- 把 {prefab=, count=} 或扁平字符串数组统一展开为扁平 prefab 列表（执行层均按此处理）
 local function NormalizeIngredients(ingredients)
     if not ingredients then return nil end
@@ -70,6 +98,9 @@ local function DumpIngredients(ingredients)
 end
 
 local function Cook(prefab, data, range, auto_cook_source, target_cont, quiet)
+    if not ThePlayer then
+        return Silent()
+    end
     Logger.Logf("[智能锅] Cook: prefab=%s data=%s quiet=%s", tostring(prefab), DumpIngredients(data), tostring(quiet))
     if Action.HasActiveItem() then
         Logger.Log("[智能锅] Cook 退出: 玩家正持有物品")
@@ -180,29 +211,16 @@ function AutoCook:SaveMemory(ingredients, use_quantity)
     end
     Logger.Logf("[智能锅] SaveMemory: use_quantity=%s max_slots=%d ingredients=%s",
         tostring(use_quantity), max_slots, DumpIngredients(ingredients))
-    if not ingredients or #ingredients == 0 then
-        Logger.Log("[智能锅] SaveMemory 失败: 食材为空")
-        return false
-    end
-    -- 普通设备：必须严格等于槽位数；可堆叠设备：允许总食材数超过槽位，但不同种类数不能超过槽位
-    if not use_quantity and #ingredients ~= max_slots then
-        Logger.Logf("[智能锅] SaveMemory 失败: 普通设备食材数%d 不等于槽位数%d", #ingredients, max_slots)
-        return false
-    end
-    if use_quantity then
-        local distinct = {}
-        local distinct_count = 0
-        for _, ing in ipairs(ingredients) do
-            local name = type(ing) == "table" and ing.prefab or ing
-            if not distinct[name] then
-                distinct[name] = true
-                distinct_count = distinct_count + 1
-            end
+    local ok, err, a, b = ValidateIngredientsForCooker(ingredients, max_slots, use_quantity)
+    if not ok then
+        if err == "empty" then
+            Logger.Log("[智能锅] SaveMemory 失败: 食材为空")
+        elseif err == "slot_mismatch" then
+            Logger.Logf("[智能锅] SaveMemory 失败: 普通设备食材数%d 不等于槽位数%d", a, b)
+        elseif err == "too_many_types" then
+            Logger.Logf("[智能锅] SaveMemory 失败: 特殊设备食材种类数%d 超过槽位数%d", a, b)
         end
-        if distinct_count > max_slots then
-            Logger.Logf("[智能锅] SaveMemory 失败: 可堆叠设备食材种类数%d 超过槽位数%d", distinct_count, max_slots)
-            return false
-        end
+        return false
     end
     self._memory = { ingredients = ingredients, use_quantity = use_quantity }
     if self._panel._pot_bar then
@@ -217,29 +235,20 @@ function AutoCook:SaveRecipeMemory(recipe_name, ingredients)
     local use_quantity = self._panel._use_quantity_matching == true
     Logger.Logf("[智能锅] SaveRecipeMemory: recipe=%s use_quantity=%s ingredients=%s",
         tostring(recipe_name), tostring(use_quantity), DumpIngredients(ingredients))
-    if not recipe_name or not ingredients or #ingredients == 0 then
-        Logger.Log("[智能锅] SaveRecipeMemory 失败: recipe 或食材为空")
+    if not recipe_name then
+        Logger.Log("[智能锅] SaveRecipeMemory 失败: recipe 为空")
         return false
     end
-    -- 普通设备：必须严格等于槽位数；可堆叠设备：按不同种类数判断
-    if not use_quantity and #ingredients ~= max_slots then
-        Logger.Logf("[智能锅] SaveRecipeMemory 失败: 普通设备食材数%d 不等于槽位数%d", #ingredients, max_slots)
+    local ok, err, a, b = ValidateIngredientsForCooker(ingredients, max_slots, use_quantity)
+    if not ok then
+        if err == "empty" then
+            Logger.Log("[智能锅] SaveRecipeMemory 失败: 食材为空")
+        elseif err == "slot_mismatch" then
+            Logger.Logf("[智能锅] SaveRecipeMemory 失败: 普通设备食材数%d 不等于槽位数%d", a, b)
+        elseif err == "too_many_types" then
+            Logger.Logf("[智能锅] SaveRecipeMemory 失败: 特殊设备食材种类数%d 超过槽位数%d", a, b)
+        end
         return false
-    end
-    if use_quantity then
-        local distinct = {}
-        local distinct_count = 0
-        for _, ing in ipairs(ingredients) do
-            local name = type(ing) == "table" and ing.prefab or ing
-            if not distinct[name] then
-                distinct[name] = true
-                distinct_count = distinct_count + 1
-            end
-        end
-        if distinct_count > max_slots then
-            Logger.Logf("[智能锅] SaveRecipeMemory 失败: 可堆叠设备食材种类数%d 超过槽位数%d", distinct_count, max_slots)
-            return false
-        end
     end
     local mem = MemoryStore.GetOrCreateMem(recipe_name)
     mem.slots[mem.selected] = { ingredients = ingredients, use_quantity = use_quantity }
@@ -356,26 +365,15 @@ function AutoCook:QuickCook(recipe_name)
         Say(STRINGS.CSP.QUICK_NO_MEMORY)
         return false
     end
-    if not use_quantity and #memory ~= max_slots then
-        Logger.Logf("[智能锅] QuickCook 失败: 普通设备记忆长度%d 不等于槽位数%d", #memory, max_slots)
+    local ok, err, a, b = ValidateIngredientsForCooker(memory, max_slots, use_quantity)
+    if not ok then
+        if err == "slot_mismatch" then
+            Logger.Logf("[智能锅] QuickCook 失败: 普通设备记忆长度%d 不等于槽位数%d", a, b)
+        elseif err == "too_many_types" then
+            Logger.Logf("[智能锅] QuickCook 失败: 特殊设备记忆种类数%d 超过槽位数%d", a, b)
+        end
         Say(STRINGS.CSP.QUICK_NO_MEMORY)
         return false
-    end
-    if use_quantity then
-        local distinct = {}
-        local distinct_count = 0
-        for _, ing in ipairs(memory) do
-            local name = type(ing) == "table" and ing.prefab or ing
-            if not distinct[name] then
-                distinct[name] = true
-                distinct_count = distinct_count + 1
-            end
-        end
-        if distinct_count > max_slots then
-            Logger.Logf("[智能锅] QuickCook 失败: 可堆叠设备记忆种类数%d 超过槽位数%d", distinct_count, max_slots)
-            Say(STRINGS.CSP.QUICK_NO_MEMORY)
-            return false
-        end
     end
 
     local slot_data = self._panel._slot_data
@@ -488,26 +486,15 @@ function AutoCook:Execute()
         Say(STRINGS.CSP.AUTO_NEED_RECIPE)
         return false
     end
-    if not use_quantity and #self._memory.ingredients ~= max_slots then
-        Logger.Logf("[智能锅] Execute 失败: 普通设备记忆长度%d 不等于槽位数%d", #self._memory.ingredients, max_slots)
+    local ok, err, a, b = ValidateIngredientsForCooker(self._memory.ingredients, max_slots, use_quantity)
+    if not ok then
+        if err == "slot_mismatch" then
+            Logger.Logf("[智能锅] Execute 失败: 普通设备记忆长度%d 不等于槽位数%d", a, b)
+        elseif err == "too_many_types" then
+            Logger.Logf("[智能锅] Execute 失败: 特殊设备记忆种类数%d 超过槽位数%d", a, b)
+        end
         Say(STRINGS.CSP.AUTO_NEED_RECIPE)
         return false
-    end
-    if use_quantity then
-        local distinct = {}
-        local distinct_count = 0
-        for _, ing in ipairs(self._memory.ingredients) do
-            local name = type(ing) == "table" and ing.prefab or ing
-            if not distinct[name] then
-                distinct[name] = true
-                distinct_count = distinct_count + 1
-            end
-        end
-        if distinct_count > max_slots then
-            Logger.Logf("[智能锅] Execute 失败: 可堆叠设备记忆种类数%d 超过槽位数%d", distinct_count, max_slots)
-            Say(STRINGS.CSP.AUTO_NEED_RECIPE)
-            return false
-        end
     end
 
     local current_container = self._panel._container

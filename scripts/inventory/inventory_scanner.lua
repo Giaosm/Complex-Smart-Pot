@@ -1,6 +1,5 @@
 -- 食材扫描：面板「可做」检测与自动做饭取货共用的库存/容器扫描
--- 注意：两种用途在各来源模式下的语义存在差异（如 ScanForAutoCook 的 "inv" 实际包含背包），
--- 逐条对照见 重构待办.md 第六节行为矩阵，当前保持现状未做行为修正
+-- 注意：两种用途在各来源模式下的语义已尽量对齐（"inv" 仅扫描物品栏本身，不含背包与外部容器）。
 local cooking = require("cooking")
 local GetStackSize = require("utils/getstacksize")
 
@@ -117,7 +116,7 @@ function Scanner.GetSlotsFromAll(source)
         for _, s in ipairs(open_slots) do table.insert(slots, s) end
     end
 
-    if source ~= "fridge" then
+    if source ~= "inv" and source ~= "fridge" then
         local backpack = inv:GetEquippedItem(EQUIPSLOTS.BODY)
         if backpack then
             local bp_cont = backpack.replica and backpack.replica.container

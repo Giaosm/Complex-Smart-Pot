@@ -7,6 +7,13 @@ local Logger = require("debug/logger")
 local BuildNamesTags = Matcher.BuildNamesTags
 local CheckRecipeByCounts = ComboMatcher.CheckRecipeByCounts
 
+-- 局部日志包装：仅在调试开启时才计算参数，避免 Dump* 函数在关闭时仍执行
+local function Logf(fmt, ...)
+    if Logger.IsEnabled() then
+        Logger.Logf(fmt, ...)
+    end
+end
+
 local CACHE_MAX = 500
 local NEGATIVE = false  -- 负缓存哨兵：不可制作也缓存，避免每次刷新重跑回溯
 local _combo_cache = {}
@@ -53,7 +60,7 @@ end
 -- 数量匹配模式：验证指定计数表是否确实产出目标料理（含优先级判定）
 local function TestRecipeByCounts(cooker, recipe_item, sorted_defs, names, tags)
     if recipe_item.recipe_def == nil or recipe_item.recipe_def.test == nil then
-        Logger.Logf("[智能锅] TestRecipeByCounts: recipe=%s 无 recipe_def.test", recipe_item.prefab)
+        Logf("[智能锅] TestRecipeByCounts: recipe=%s 无 recipe_def.test", recipe_item.prefab)
         return false
     end
     local recipe_prefab = recipe_item.prefab
@@ -61,9 +68,9 @@ local function TestRecipeByCounts(cooker, recipe_item, sorted_defs, names, tags)
     -- 同时用分析时相同的空 cooker 调用，看看是否是 cooker 参数导致结果不同
     local st_empty, ret_empty = pcall(recipe_item.recipe_def.test, '', names, tags)
     local st_real, ret_real = pcall(recipe_item.recipe_def.test, cooker, names, tags)
-    Logger.Logf("[智能锅] TestRecipeByCounts: recipe=%s cooker=%q names=%s tags=%s",
+    Logf("[智能锅] TestRecipeByCounts: recipe=%s cooker=%q names=%s tags=%s",
         recipe_prefab, tostring(cooker), DumpCounts(names), DumpCounts(tags))
-    Logger.Logf("[智能锅]   test('')=%s test(cooker)=%s",
+    Logf("[智能锅]   test('')=%s test(cooker)=%s",
         tostring(st_empty and ret_empty), tostring(st_real and ret_real))
 
     if sorted_defs then
@@ -72,13 +79,13 @@ local function TestRecipeByCounts(cooker, recipe_item, sorted_defs, names, tags)
             if entry.def ~= nil and entry.def.test ~= nil then
                 local ok, r = pcall(entry.def.test, cooker, names, tags)
                 if not ok then
-                    Logger.Logf("[智能锅] TestRecipeByCounts: recipe=%s test 调用报错: %s", entry.prefab, tostring(r))
+                    Logf("[智能锅] TestRecipeByCounts: recipe=%s test 调用报错: %s", entry.prefab, tostring(r))
                 end
                 if ok and r then
                     local same_priority = (entry.def.priority or 0) == (recipe_item.recipe_def.priority or 0)
                     local matched = entry.prefab == recipe_prefab or same_priority
                     if not matched then
-                        Logger.Logf("[智能锅] TestRecipeByCounts: recipe=%s 被高优先级料理 %s 抢占",
+                        Logf("[智能锅] TestRecipeByCounts: recipe=%s 被高优先级料理 %s 抢占",
                             recipe_prefab, entry.prefab)
                     end
                     return matched
@@ -86,14 +93,14 @@ local function TestRecipeByCounts(cooker, recipe_item, sorted_defs, names, tags)
             end
         end
         -- 没有任何料理匹配，说明当前 test 虽然返回 true 但已被优先级挤出
-        Logger.Logf("[智能锅] TestRecipeByCounts: recipe=%s 在 sorted_defs 中无任何匹配", recipe_prefab)
+        Logf("[智能锅] TestRecipeByCounts: recipe=%s 在 sorted_defs 中无任何匹配", recipe_prefab)
         return false
     else
         local st, ret = pcall(recipe_item.recipe_def.test, cooker, names, tags)
         if not st then
-            Logger.Logf("[智能锅] TestRecipeByCounts: recipe=%s test 调用报错: %s", recipe_prefab, tostring(ret))
+            Logf("[智能锅] TestRecipeByCounts: recipe=%s test 调用报错: %s", recipe_prefab, tostring(ret))
         end
-        Logger.Logf("[智能锅] TestRecipeByCounts: recipe=%s test 返回=%s", recipe_prefab, tostring(st and ret))
+        Logf("[智能锅] TestRecipeByCounts: recipe=%s test 返回=%s", recipe_prefab, tostring(st and ret))
         return st and ret
     end
 end
@@ -149,15 +156,15 @@ local function DumpRequirements(reqs)
     return table.concat(parts, " ")
 end
 
--- 数量匹配模式：为一个料理构造一组带数量的食材（可堆叠设备用）
+-- 数量匹配模式：为一个料理构造一组带数量的食材（可堆叠/高数量需求设备用）
 local function BuildQuantityCombo(recipe_item, bag_counts, pot_counts, cooker, max_slots, ingredients, ingredient_aliases, sorted_defs)
     local recipe_name = recipe_item.prefab
     local reqs = recipe_item.recipe_requirements
-    Logger.Logf("[智能锅] BuildQuantityCombo 开始: recipe=%s max_slots=%d", recipe_name, max_slots or 4)
-    Logger.Logf("[智能锅]   requirements: %s", DumpRequirements(reqs))
-    Logger.Logf("[智能锅]   bag=%s pot=%s", DumpCounts(bag_counts), DumpCounts(pot_counts))
+    Logf("[智能锅] BuildQuantityCombo 开始: recipe=%s max_slots=%d", recipe_name, max_slots or 4)
+    Logf("[智能锅]   requirements: %s", DumpRequirements(reqs))
+    Logf("[智能锅]   bag=%s pot=%s", DumpCounts(bag_counts), DumpCounts(pot_counts))
     if not reqs then
-        Logger.Logf("[智能锅] BuildQuantityCombo 失败: recipe=%s 无 recipe_requirements", recipe_name)
+        Logf("[智能锅] BuildQuantityCombo 失败: recipe=%s 无 recipe_requirements", recipe_name)
         return nil
     end
 
@@ -176,7 +183,7 @@ local function BuildQuantityCombo(recipe_item, bag_counts, pot_counts, cooker, m
     for name, count in pairs(pot_counts or {}) do
         add(name, count)
     end
-    Logger.Logf("[智能锅]   加入锅中食材后 chosen=%s", DumpCounts(chosen))
+    Logf("[智能锅]   加入锅中食材后 chosen=%s", DumpCounts(chosen))
 
     -- 1. 满足强制名食材
     if reqs.minnames then
@@ -184,14 +191,14 @@ local function BuildQuantityCombo(recipe_item, bag_counts, pot_counts, cooker, m
             local need = min_count - chosen_count(name)
             if need > 0 then
                 if bag_count(name) < need then
-                    Logger.Logf("[智能锅] BuildQuantityCombo 失败: recipe=%s minnames %s 需要%d 库存只有%d",
+                    Logf("[智能锅] BuildQuantityCombo 失败: recipe=%s minnames %s 需要%d 库存只有%d",
                         recipe_name, name, need, bag_count(name))
                     return nil
                 end
                 add(name, need)
             end
         end
-        Logger.Logf("[智能锅]   满足 minnames 后 chosen=%s", DumpCounts(chosen))
+        Logf("[智能锅]   满足 minnames 后 chosen=%s", DumpCounts(chosen))
     end
 
     -- 2. 满足可替代组（同类食材可互相替代）
@@ -212,12 +219,12 @@ local function BuildQuantityCombo(recipe_item, bag_counts, pot_counts, cooker, m
                     end
                 end
                 if need > 0 then
-                    Logger.Logf("[智能锅] BuildQuantityCombo 失败: recipe=%s analog_group 仍缺%d", recipe_name, need)
+                    Logf("[智能锅] BuildQuantityCombo 失败: recipe=%s analog_group 仍缺%d", recipe_name, need)
                     return nil
                 end
             end
         end
-        Logger.Logf("[智能锅]   满足 analog_groups 后 chosen=%s", DumpCounts(chosen))
+        Logf("[智能锅]   满足 analog_groups 后 chosen=%s", DumpCounts(chosen))
     end
 
     -- 3. 满足标签需求
@@ -252,28 +259,28 @@ local function BuildQuantityCombo(recipe_item, bag_counts, pot_counts, cooker, m
                     end
                 end
                 if not found then
-                    Logger.Logf("[智能锅] BuildQuantityCombo 失败: recipe=%s mintag %s 需要%d 无法满足",
+                    Logf("[智能锅] BuildQuantityCombo 失败: recipe=%s mintag %s 需要%d 无法满足",
                         recipe_name, tag, min_val)
                     return nil
                 end
             end
         end
-        Logger.Logf("[智能锅]   满足 mintags 后 chosen=%s", DumpCounts(chosen))
+        Logf("[智能锅]   满足 mintags 后 chosen=%s", DumpCounts(chosen))
     end
 
     -- 4. 验证组合是否满足料理要求
     local names, tags = BuildNamesTagsFromCounts(chosen, ingredients, ingredient_aliases)
-    Logger.Logf("[智能锅]   test 前 names=%s tags=%s", DumpCounts(names), DumpCounts(tags))
+    Logf("[智能锅]   test 前 names=%s tags=%s", DumpCounts(names), DumpCounts(tags))
     if recipe_item.recipe_def ~= nil and recipe_item.recipe_def.test ~= nil then
         -- 有原始 test 函数（原版/HOF）：用游戏原始 test 验证，并做优先级判定
         if not TestRecipeByCounts(cooker, recipe_item, sorted_defs, names, tags) then
-            Logger.Logf("[智能锅] BuildQuantityCombo 失败: recipe=%s 未通过 recipe_def.test 或优先级判定", recipe_name)
+            Logf("[智能锅] BuildQuantityCombo 失败: recipe=%s 未通过 recipe_def.test 或优先级判定", recipe_name)
             return nil
         end
     else
         -- 无原始 test 函数（如登仙炼丹炉 recipe_def 传的是空表）：用推导出的 requirements 校验
         if not CheckRecipeByCounts(recipe_item, names, tags, nil, ingredients) then
-            Logger.Logf("[智能锅] BuildQuantityCombo 失败: recipe=%s 未通过 recipe_requirements 校验", recipe_name)
+            Logf("[智能锅] BuildQuantityCombo 失败: recipe=%s 未通过 recipe_requirements 校验", recipe_name)
             return nil
         end
     end
@@ -284,7 +291,7 @@ local function BuildQuantityCombo(recipe_item, bag_counts, pot_counts, cooker, m
         if count > 0 then distinct = distinct + 1 end
     end
     if distinct > max_slots then
-        Logger.Logf("[智能锅] BuildQuantityCombo 失败: recipe=%s 食材种类数%d 超过 max_slots%d",
+        Logf("[智能锅] BuildQuantityCombo 失败: recipe=%s 食材种类数%d 超过 max_slots%d",
             recipe_name, distinct, max_slots)
         return nil
     end
@@ -297,7 +304,7 @@ local function BuildQuantityCombo(recipe_item, bag_counts, pot_counts, cooker, m
         end
     end
     table.sort(combo, function(a, b) return a.prefab < b.prefab end)
-    Logger.Logf("[智能锅] BuildQuantityCombo 成功: recipe=%s combo=%s", recipe_name, DumpCombo(combo))
+    Logf("[智能锅] BuildQuantityCombo 成功: recipe=%s combo=%s", recipe_name, DumpCombo(combo))
 
     return combo
 end
@@ -337,7 +344,7 @@ function ComboGen.GetRecipeCraftableCombos(db, recipe_item, bag_counts, pot_coun
     -- 数量匹配模式：可堆叠设备（如炼丹炉）单个格子可放多份同种食材，
     -- 用贪心 + test 验证生成一组带数量的食材，而不是把每个食材当成独立 slot。
     if use_quantity_matching then
-        Logger.Logf("[智能锅] GetRecipeCraftableCombos 进入数量匹配分支: recipe=%s", recipe_item.prefab)
+        Logf("[智能锅] GetRecipeCraftableCombos 进入数量匹配分支: recipe=%s", recipe_item.prefab)
         raw_bag_counts = raw_bag_counts or bag_counts
         local combo = BuildQuantityCombo(recipe_item, bag_counts, pot_counts, cooker, max_slots or 4, ingredients, db._ingredient_aliases, sorted_defs)
         if combo then
@@ -349,13 +356,13 @@ function ComboGen.GetRecipeCraftableCombos(db, recipe_item, bag_counts, pot_coun
                 end
             end
             portions = math.max(1, portions)
-            Logger.Logf("[智能锅] GetRecipeCraftableCombos 返回组合: recipe=%s combo=%s portions=%d",
+            Logf("[智能锅] GetRecipeCraftableCombos 返回组合: recipe=%s combo=%s portions=%d",
                 recipe_item.prefab, DumpCombo(combo), portions)
             local r = { { ingredients = combo, portions = portions } }
             CacheSet(cache_key, r)
             return r
         end
-        Logger.Logf("[智能锅] GetRecipeCraftableCombos 无组合: recipe=%s", recipe_item.prefab)
+        Logf("[智能锅] GetRecipeCraftableCombos 无组合: recipe=%s", recipe_item.prefab)
         CacheSet(cache_key, nil)
         return nil
     end

@@ -563,7 +563,7 @@ function RecipePanel:_RefreshBackpackRecipes()
 
     local max_per_type
     if self._use_quantity_matching then
-        -- 炼丹炉/酿酒桶等特殊设备：单个格子可放大量同种食材，从配方中算出最大需求量
+        -- 炼丹炉等可堆叠特殊设备：单个格子可放大量同种食材，从配方中算出最大需求量
         local max_needed = 0
         for _, recipe_def in pairs(self._cooker_recipes or {}) do
             if recipe_def.recipe then
@@ -585,7 +585,6 @@ function RecipePanel:_RefreshBackpackRecipes()
         max_per_type = self._max_slots - occupied_slots
     end
 
-    local pot_counts = self._cached_pot_counts or {}
     local fixed_counts = {}
     for _, prefab in pairs(self._slot_data) do
         fixed_counts[prefab] = (fixed_counts[prefab] or 0) + 1

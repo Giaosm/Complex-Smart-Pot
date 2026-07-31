@@ -269,14 +269,20 @@ function Collector.CollectXd(db)
                 end
 
                 -- 处理替代配方（alternative_recipe = {[1] = {trunk_summer=1, trunk_winter=1}}）
+                -- 同组内任意一个食材即可，数量取组内任意一个 count（通常相同）
                 local analog_groups = nil
                 if data.alternative_recipe then
                     analog_groups = {}
                     for _, alt_group in pairs(data.alternative_recipe) do
                         local group = { names = {}, amount = 1 }
+                        local first_count = nil
                         for ing_name, ing_count in pairs(alt_group) do
                             table.insert(group.names, ing_name)
+                            if first_count == nil then
+                                first_count = ing_count
+                            end
                         end
+                        group.amount = first_count or 1
                         if #group.names > 0 then
                             table.insert(analog_groups, group)
                         end

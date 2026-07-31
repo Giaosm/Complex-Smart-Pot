@@ -8,6 +8,35 @@ local Mouse_controls = {
     [CONTROL_SECONDARY] = true,
 }
 
+-- 在当前 playercontroller 上安装/刷新 OnControl 包装器
+-- 支持首次安装、玩家重生/切换后重新获取新的 pc
+local function InstallWrapper(self, pc)
+    if not pc then return end
+    if not self._wrapper_on_control then
+        self._wrapper_on_control = function(pc, control, down, ...)
+            if down then
+                if not TheInput:IsControlPressed(CONTROL_FORCE_INSPECT)
+                    and not (Mouse_controls[control] and TheInput:GetHUDEntityUnderMouse()) then
+                    for func, ctrls in pairs(self._func_control) do
+                        if ctrls[control] then
+                            if func(pc) then
+                                self._func_control[func] = nil
+                            end
+                        end
+                    end
+                end
+            end
+            if self._orig_on_control then
+                return self._orig_on_control(pc, control, down, ...)
+            end
+        end
+    end
+    if pc.OnControl ~= self._wrapper_on_control then
+        self._orig_on_control = pc.OnControl
+        pc.OnControl = self._wrapper_on_control
+    end
+end
+
 local TaskQueue = Class(function(self)
     self._running = false
     self._thread_push = nil
@@ -17,28 +46,8 @@ local TaskQueue = Class(function(self)
     self._orig_on_control = nil
     self._wrapper_on_control = nil
 
-    if ThePlayer then
-        local pc = ThePlayer.components and ThePlayer.components.playercontroller
-        if pc then
-            self._orig_on_control = pc.OnControl
-            self._wrapper_on_control = function(pc, control, down, ...)
-                if down then
-                    if not TheInput:IsControlPressed(CONTROL_FORCE_INSPECT)
-                        and not (Mouse_controls[control] and TheInput:GetHUDEntityUnderMouse()) then
-                        for func, ctrls in pairs(self._func_control) do
-                            if ctrls[control] then
-                                if func(pc) then
-                                    self._func_control[func] = nil
-                                end
-                            end
-                        end
-                    end
-                end
-                return self._orig_on_control(pc, control, down, ...)
-            end
-            pc.OnControl = self._wrapper_on_control
-        end
-    end
+    local pc = ThePlayer and ThePlayer.components and ThePlayer.components.playercontroller
+    InstallWrapper(self, pc)
 end)
 
 function TaskQueue:StopCurrent()
@@ -104,13 +113,8 @@ end
 function TaskQueue:RegNowTask(func_loop, func_stop, controls)
     self:StopCurrent()
 
-    if self._wrapper_on_control then
-        local pc = ThePlayer and ThePlayer.components and ThePlayer.components.playercontroller
-        if pc and pc.OnControl ~= self._wrapper_on_control then
-            self._orig_on_control = pc.OnControl
-            pc.OnControl = self._wrapper_on_control
-        end
-    end
+    local pc = ThePlayer and ThePlayer.components and ThePlayer.components.playercontroller
+    InstallWrapper(self, pc)
 
     self._task_func_stop = func_stop
     self._running = true

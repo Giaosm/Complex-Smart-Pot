@@ -21,6 +21,7 @@ local function IsCooker(ent)
 end
 
 local function FindEnts(prefab, range)
+    if not ThePlayer then return {} end
     local pos = ThePlayer:GetPosition()
     local ents = TheSim:FindEntities(pos.x, 0, pos.z,
         range, FIND_TAGS, FIND_CANT_TAGS
