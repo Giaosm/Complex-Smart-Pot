@@ -20,17 +20,25 @@ local function IsCooker(ent)
     return btn and btn.fn and btn.validfn
 end
 
-local function FindEnts(prefab, range)
+local function FindEnts(prefab, range, preferred)
     if not ThePlayer then return {} end
     local pos = ThePlayer:GetPosition()
     local ents = TheSim:FindEntities(pos.x, 0, pos.z,
         range, FIND_TAGS, FIND_CANT_TAGS
     )
     local pots = {}
+    local preferred_index = nil
     for _, ent in ipairs(ents) do
         if ent.prefab == prefab and IsCooker(ent) then
             table.insert(pots, ent)
+            if preferred and ent == preferred then
+                preferred_index = #pots
+            end
         end
+    end
+    if preferred_index and preferred_index > 1 then
+        local pref = table.remove(pots, preferred_index)
+        table.insert(pots, 1, pref)
     end
     return pots
 end

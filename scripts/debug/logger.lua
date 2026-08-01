@@ -8,15 +8,19 @@ function Logger.IsEnabled()
 end
 
 function Logger.Log(...)
-    if Config.IsDebugLogging() then
-        print(...)
-    end
+    if not Config.IsDebugLogging() then return end
+    print(...)
 end
 
 function Logger.Logf(fmt, ...)
-    if Config.IsDebugLogging() then
-        print(string.format(fmt, ...))
-    end
+    if not Config.IsDebugLogging() then return end
+    print(string.format(fmt, ...))
+end
+
+-- 惰性日志：传入一个返回字符串的函数，仅在调试开启时执行，避免关闭时产生昂贵拼接/求值
+function Logger.LogLazy(fn)
+    if not Config.IsDebugLogging() then return end
+    print(fn())
 end
 
 -- 语义化接口：食材扫描结果

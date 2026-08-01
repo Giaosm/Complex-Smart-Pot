@@ -842,8 +842,10 @@ function RecipePanel:GetCraftableCombinations(recipe_item)
         self._cached_bag_counts_raw,
         self._cached_sorted_defs
     )
-    Logger.Logf("[智能锅] GetCraftableCombinations 返回: recipe=%s result=%s",
-        recipe_item.prefab, r and ("count=" .. #r) or "nil")
+    Logger.LogLazy(function()
+        return string.format("[智能锅] GetCraftableCombinations 返回: recipe=%s result=%s",
+            recipe_item.prefab, r and ("count=" .. #r) or "nil")
+    end)
     return r
 end
 

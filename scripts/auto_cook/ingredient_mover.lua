@@ -55,11 +55,39 @@ local function MoveItemFromAllOfSlot(slot, srccontainer, destcontainer)
     end
 end
 
--- 按需求清单（prefab 数组）从各来源凑齐食材，返回槽位列表；数量不足返回 nil
+local function MoveItemFromCountOfSlot(slot, srccontainer, destcontainer, count)
+    count = math.max(1, math.floor(count))
+    if TheWorld and TheWorld.ismastersim then
+        local container = srccontainer.replica and (srccontainer.replica.container or srccontainer.replica.inventory)
+        if container then
+            container:MoveItemFromCountOfSlot(slot, destcontainer, count)
+        end
+    else
+        if srccontainer == ThePlayer then
+            SendRPCToServer(RPC.MoveInvItemFromCountOfSlot, slot, destcontainer, count)
+        else
+            SendRPCToServer(RPC.MoveItemFromCountOfSlot, slot, srccontainer, destcontainer, count)
+        end
+    end
+end
+
+-- 按需求清单从各来源凑齐食材，返回槽位及数量列表；数量不足返回 nil
+-- data 支持 prefab 数组或 {prefab = count} 数量表
 local function CheckIng(data, auto_cook_source, notcont)
     local ing_data = {}
-    for _, prefab in ipairs(data) do
-        ing_data[prefab] = (ing_data[prefab] or 0) + 1
+    if #data > 0 then
+        for _, prefab in ipairs(data) do
+            ing_data[prefab] = (ing_data[prefab] or 0) + 1
+        end
+    else
+        for prefab, count in pairs(data) do
+            ing_data[prefab] = count
+        end
+    end
+
+    local total_need = 0
+    for _, count in pairs(ing_data) do
+        total_need = total_need + count
     end
 
     local slots = GetSlotsFromAll(auto_cook_source)
@@ -71,9 +99,12 @@ local function CheckIng(data, auto_cook_source, notcont)
                 if not (notcont and slot.cont == notcont) then
                     local size_slot = GetStackSize(slot.item)
                     local take = math.min(size_slot, size_ing)
-                    for i = 1, take do
-                        table.insert(order_slots, slot)
-                    end
+                    table.insert(order_slots, {
+                        slot = slot.slot,
+                        cont = slot.cont,
+                        item = slot.item,
+                        count = take,
+                    })
                     size_ing = size_ing - take
                     if size_ing <= 0 then break end
                 end
@@ -81,46 +112,87 @@ local function CheckIng(data, auto_cook_source, notcont)
         end
     end
 
-    if #order_slots == #data then
+    local total_found = 0
+    for _, slot in ipairs(order_slots) do
+        total_found = total_found + slot.count
+    end
+    if total_found == total_need then
         return order_slots
     end
 end
 
--- 同步锅内食材：移出多余食材、补齐缺失食材
-local function SyncPotContents(container, cont, required, auto_cook_source)
+-- 同步锅内食材：移出多余食材、补齐缺失食材（支持堆叠设备按数量搬运）
+-- required 支持 prefab 数组或 {prefab = count} 数量表
+local function SyncPotContents(container, cont, required, auto_cook_source, cooker_prefab)
     local items = container:GetItems() or {}
     local need = {}
-    for _, p in ipairs(required) do
-        need[p] = (need[p] or 0) + 1
+    if #required > 0 then
+        for _, p in ipairs(required) do
+            local name = type(p) == "table" and p.prefab or p
+            need[name] = (need[name] or 0) + (type(p) == "table" and p.count or 1)
+        end
+    else
+        for name, count in pairs(required) do
+            if type(name) == "string" then
+                need[name] = count
+            end
+        end
     end
 
     for slot, item in pairs(items) do
         if item and item.prefab then
+            local stack_size = GetStackSize(item)
             local n = need[item.prefab] or 0
             if n > 0 then
-                need[item.prefab] = n - 1
+                local keep = math.min(n, stack_size)
+                local excess = stack_size - keep
+                need[item.prefab] = n - keep
+                if excess > 0 then
+                    local dest = CanTakeItem(item)
+                    if not dest then return false end
+                    MoveItemFromCountOfSlot(slot, cont, dest, excess)
+                    Sleep(0)
+                end
             else
                 local dest = CanTakeItem(item)
                 if not dest then return false end
-                MoveItemFromAllOfSlot(slot, cont, dest)
+                MoveItemFromCountOfSlot(slot, cont, dest, stack_size)
                 Sleep(0)
             end
         end
     end
 
-    local missing = {}
-    for prefab, count in pairs(need) do
-        for _ = 1, count do
-            table.insert(missing, prefab)
-        end
+    local remaining = 0
+    for _, count in pairs(need) do
+        remaining = remaining + count
     end
-    if #missing == 0 then return true end
+    if remaining == 0 then return true end
 
-    local found = CheckIng(missing, auto_cook_source, cont)
+    local found = CheckIng(need, auto_cook_source, cont)
     if not found then return false end
-    for _, slot in ipairs(found) do
-        MoveItemFromAllOfSlot(slot.slot, slot.cont, cont)
-        Sleep(0)
+
+    local accepts_stacks = container and container.AcceptsStacks ~= nil and container:AcceptsStacks()
+    -- 某些 mod 锅虽然支持堆叠，但 validfn 要求 4 个槽位都必须有食材（如 medal_cookpot）。
+    -- 如果一次性按 count 搬运，会把所有食材堆到同一个格子里，导致无法烹饪。
+    -- 所以只要是 4 槽且支持堆叠的 cooker，就强制按单个搬运，让食材均匀占满 4 个槽位。
+    local ok_slots, num_slots = pcall(function() return container:GetNumSlots() end)
+    local ok_type, cont_type = pcall(function() return container.type end)
+    local is_stackable_four_slot_cooker = accepts_stacks
+        and ok_slots and num_slots == 4
+        and ok_type and cont_type == "cooker"
+    if accepts_stacks and not is_stackable_four_slot_cooker then
+        for _, slot in ipairs(found) do
+            MoveItemFromCountOfSlot(slot.slot, slot.cont, cont, slot.count)
+            Sleep(0)
+        end
+    else
+        -- 普通锅/红晶锅：每次只能放入 1 个，让游戏自动分配到不同槽位
+        for _, slot in ipairs(found) do
+            for _ = 1, slot.count do
+                MoveItemFromAllOfSlot(slot.slot, slot.cont, cont)
+                Sleep(0)
+            end
+        end
     end
     return true
 end

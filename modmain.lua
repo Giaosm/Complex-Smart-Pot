@@ -38,8 +38,9 @@ local function LoadLanguage()
     if lang == "auto" then
         lang = _language_map[_G.LanguageTranslator and _G.LanguageTranslator.defaultlang] or "en"
     end
-    modimport("scripts/language/cn.lua")
-    if lang == "en" then
+    if lang == "cn" then
+        modimport("scripts/language/cn.lua")
+    else
         modimport("scripts/language/en.lua")
     end
 end
