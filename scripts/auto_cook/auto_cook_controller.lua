@@ -16,6 +16,8 @@ local NORMAL_MODE_RANGE = 10
 -- 烹饪确认与重试：stewer_fn 点击后最多等 1 秒确认，未确认则重试（重新同步食材+点击），最多 3 次尝试
 local MAX_COOK_ATTEMPTS = 3
 local COOK_CONFIRM_TIMEOUT = 1
+-- 找不到可操作设备时的轮询间隔（等待烹饪完成/收取，秒级状态变化无需每帧扫描）
+local IDLE_POLL_INTERVAL = FRAMES * 15
 
 -- 共享任务队列：所有权不跟随 panel 生命周期（QuickCook/Execute 先关闭容器面板再注册任务，
 -- 若队列随面板销毁，任务会被立即杀掉）；同时保证 playercontroller.OnControl 全局只被包装一次，
@@ -202,8 +204,13 @@ local function IsHarvestDone(pot, before_state)
     local can_open = IsContainerOpenable(container)
     if can_open == nil then return false end
     -- 收获前：锁定；收获后：可打开
-    if before_state and not before_state.can_open then
-        return can_open
+    if before_state and not before_state.can_open and can_open then
+        return true
+    end
+    -- 炼丹炉等收取后仍不可打开的容器：以容器变空判定收获完成
+    if not can_open then
+        local ok, empty = pcall(function() return container:IsEmpty() end)
+        if ok and empty then return true end
     end
     return can_open
 end
@@ -357,7 +364,8 @@ local function Cook(prefab, data, range, auto_cook_source, target_cont, quiet, p
     if ret then
         local act, right
         local cont = IGetElement(conts, function(target)
-            act, right = Action.GetMouseActionSoft({"HARVEST", "RUMMAGE"}, target)
+            -- FUR_HARVEST：神话书说炼丹炉的收取动作（区别于原版 HARVEST）
+            act, right = Action.GetMouseActionSoft({"HARVEST", "FUR_HARVEST", "RUMMAGE"}, target)
             if act then
                 if target._flag_next and act.action.id == "RUMMAGE" then
                     Logger.Logf("[智能锅] Cook: 跳过已标记锅")
@@ -368,6 +376,11 @@ local function Cook(prefab, data, range, auto_cook_source, target_cont, quiet, p
         end)
 
         Logger.Logf("[智能锅] Cook: 选中设备=%s 动作=%s", tostring(cont ~= nil), tostring(act and act.action and act.action.id))
+        if not cont then
+            -- 所有设备均不可操作（烹饪中/未完成），降频轮询等待状态变化，避免每帧空转扫描
+            Sleep(IDLE_POLL_INTERVAL)
+            return nil
+        end
         if cont then
             if act.action.id == "RUMMAGE" then
                 local cook_started = false
@@ -465,6 +478,8 @@ local function Cook(prefab, data, range, auto_cook_source, target_cont, quiet, p
             end) then
                 return true
             end
+            -- 存在烹饪中不可操作的锅：降频等待其完成再收取
+            Sleep(IDLE_POLL_INTERVAL)
         end
     end
     Sleep(0)
@@ -821,9 +836,16 @@ function AutoCook:CookWithIngredients(recipe_name, ingredients, multi_pot)
     end
     Logger.Logf("[智能锅] CookWithIngredients: multi_pot=%s range=%s target=%s",
         tostring(multi_pot), tostring(range), tostring(target ~= nil))
+    -- 仅多锅联动（右击）提示开始/结束，单锅（左击）静默执行
+    if multi_pot then
+        Say(STRINGS.CSP.AUTO_START)
+    end
     self._task_queue:RegNowTask(
         function()
             return Cook(current_container.prefab, flat_ingredients, range, self._auto_cook_source, target, nil)
+        end,
+        multi_pot and function()
+            Say(STRINGS.CSP.AUTO_STOP)
         end
     )
 
