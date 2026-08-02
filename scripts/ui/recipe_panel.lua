@@ -35,7 +35,7 @@ local CATEGORIES = {
 local SORT_STATE_NONE = SortButtons.STATE_NONE
 local SORT_STATE_DESC = SortButtons.STATE_DESC
 
-local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst, backpack_check_mode, auto_cook_source, range_init, prefs, select_mode, debug_logging)
+local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst, backpack_check_mode, auto_cook_source, auto_cook_mode, range_init, prefs, select_mode, debug_logging)
     Widget._ctor(self, "RecipePanel")
 
     self.data = cookbook_data
@@ -45,6 +45,7 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
     self._backpack_check_mode = backpack_check_mode or "off"
     self._auto_cook_source = auto_cook_source or "off"
     self._enable_auto_cook = self._auto_cook_source ~= "off"
+    self._auto_cook_mode = auto_cook_mode or "normal"
     self._prefs = prefs or {}
     self._select_mode = select_mode or "click"
     self._debug_logging = debug_logging == true
@@ -85,8 +86,10 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
 
 	if self._enable_auto_cook then
         self._auto_cook = GetAutoCook()(self, range_init, self._auto_cook_source)
-        self._on_right_click = function(prefab)
-            self._auto_cook:QuickCook(prefab)
+        if self._auto_cook_mode == "memory" then
+            self._on_right_click = function(prefab)
+                self._auto_cook:QuickCook(prefab)
+            end
         end
     end
 
@@ -98,7 +101,7 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
     self.scroll_list = self:AddChild(RecipeList.Create(self))
     self.scroll_list:SetPosition(L.LIST_X, 0)
 
-    if self._enable_auto_cook then
+    if self._enable_auto_cook and self._auto_cook_mode == "memory" then
         self._pot_bar = self:AddChild(PotPreviewBar(self._show_memory, function(checked)
             self._show_memory = checked
             self._prefs.show_memory = checked
@@ -163,9 +166,14 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
 
     self._recipe_popup = self:AddChild(RecipePopup(self._prefs, function(recipe_item)
         return self:GetCraftableCombinations(recipe_item)
-    end, function(recipe_name, ingredients)
-        if self._auto_cook then
+    end, function(recipe_name, ingredients, multi_pot)
+        Logger.Logf("[智能锅] 弹窗烹饪回调: mode=%s multi_pot=%s recipe=%s",
+            tostring(self._auto_cook_mode), tostring(multi_pot), tostring(recipe_name))
+        if not self._auto_cook then return end
+        if self._auto_cook_mode == "memory" then
             self._auto_cook:QuickCookWithIngredients(recipe_name, ingredients)
+        else
+            self._auto_cook:CookWithIngredients(recipe_name, ingredients, multi_pot)
         end
     end))
     self._recipe_popup:SetPosition(140, 0)
@@ -175,7 +183,7 @@ end)
 
 function RecipePanel:MakeButtons()
     local entries = {}
-    if self._enable_auto_cook then
+    if self._enable_auto_cook and self._auto_cook_mode == "memory" then
         table.insert(entries, { kind = "auto", label = STRINGS.CSP.BTN_AUTO_COOK })
     end
     for _, cfg in ipairs(CATEGORIES) do

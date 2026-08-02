@@ -11,6 +11,7 @@ local GetStackSize = require("utils/getstacksize")
 local RANGE_DEFAULT = 30
 local RANGE_MIN = 5
 local RANGE_MAX = 99
+local NORMAL_MODE_RANGE = 10
 
 -- 烹饪确认与重试：stewer_fn 点击后最多等 1 秒确认，未确认则重试（重新同步食材+点击），最多 3 次尝试
 local MAX_COOK_ATTEMPTS = 3
@@ -345,6 +346,7 @@ local function Cook(prefab, data, range, auto_cook_source, target_cont, quiet, p
     end
 
     local conts = target_cont and {target_cont} or CookerFinder.FindEnts(prefab, range, preferred_cont)
+    Logger.Logf("[智能锅] Cook: 找到设备数=%d range=%s target=%s", #conts, tostring(range), tostring(target_cont ~= nil))
     if not conts[1] then
         Logger.Log("[智能锅] Cook 退出: 未找到设备")
         return Silent()
@@ -357,13 +359,15 @@ local function Cook(prefab, data, range, auto_cook_source, target_cont, quiet, p
         local cont = IGetElement(conts, function(target)
             act, right = Action.GetMouseActionSoft({"HARVEST", "RUMMAGE"}, target)
             if act then
-                if not quiet and target._flag_next and act.action.id == "RUMMAGE" then
+                if target._flag_next and act.action.id == "RUMMAGE" then
+                    Logger.Logf("[智能锅] Cook: 跳过已标记锅")
                     return
                 end
                 return target
             end
         end)
 
+        Logger.Logf("[智能锅] Cook: 选中设备=%s 动作=%s", tostring(cont ~= nil), tostring(act and act.action and act.action.id))
         if cont then
             if act.action.id == "RUMMAGE" then
                 local cook_started = false
@@ -414,11 +418,18 @@ local function Cook(prefab, data, range, auto_cook_source, target_cont, quiet, p
                     end
                 end
 
-                if cook_started and not quiet and #conts > 1 then
-                    cont._flag_next = true
-                    cont:DoTaskInTime(10 * FRAMES, function()
-                        cont._flag_next = nil
-                    end)
+                if cook_started then
+                    if target_cont then
+                        Logger.Log("[智能锅] Cook 单锅模式完成，结束任务")
+                        return true
+                    end
+                    if #conts > 1 then
+                        Logger.Logf("[智能锅] Cook: 标记锅为已烹饪，准备找下一个")
+                        cont._flag_next = true
+                        cont:DoTaskInTime(10 * FRAMES, function()
+                            cont._flag_next = nil
+                        end)
+                    end
                 end
             elseif not quiet then
                 local before_state = CaptureContainerState(GetPotContainer(cont))
@@ -749,6 +760,70 @@ function AutoCook:QuickCookWithIngredients(recipe_name, ingredients)
     self._task_queue:RegNowTask(
         function()
             return Cook(current_container.prefab, flat_ingredients, self._range_search, self._auto_cook_source, current_container, true)
+        end
+    )
+
+    return true
+end
+
+-- 普通模式：不保存配方记忆，直接按传入食材烹饪
+-- multi_pot 为 true 时多锅联动（范围固定 10），否则只烹饪当前设备
+function AutoCook:CookWithIngredients(recipe_name, ingredients, multi_pot)
+    if self._task_queue:IsRunning() then
+        return false
+    end
+
+    local current_container = self._panel._container
+    if not current_container then
+        return false
+    end
+
+    if self._panel._cooker_recipes and not self._panel._cooker_recipes[recipe_name] then
+        Say(STRINGS.CSP.QUICK_WRONG_DEVICE)
+        return false
+    end
+
+    local flat_ingredients = NormalizeIngredients(ingredients)
+    if not flat_ingredients or #flat_ingredients == 0 then
+        return false
+    end
+
+    local slot_data = self._panel._slot_data
+    if slot_data and next(slot_data) then
+        local container = current_container.replica and current_container.replica.container
+        if container then
+            for _, item in pairs(container:GetItems() or {}) do
+                if item and not Mover.CanTakeItem(item) then
+                    Say(STRINGS.CSP.QUICK_NO_SPACE)
+                    return false
+                end
+            end
+        end
+    end
+
+    if not Mover.CheckIng(flat_ingredients, self._auto_cook_source, current_container) then
+        Say(STRINGS.CSP.QUICK_NO_INGREDIENTS)
+        return false
+    end
+
+    if Action.HasActiveItem() then
+        Action.ReturnActiveItem()
+    end
+
+    if current_container then
+        PanelManager.DestroyPanel(current_container)
+    end
+
+    local range = multi_pot and NORMAL_MODE_RANGE or nil
+    local target = nil
+    if not multi_pot then
+        target = current_container
+    end
+    Logger.Logf("[智能锅] CookWithIngredients: multi_pot=%s range=%s target=%s",
+        tostring(multi_pot), tostring(range), tostring(target ~= nil))
+    self._task_queue:RegNowTask(
+        function()
+            return Cook(current_container.prefab, flat_ingredients, range, self._auto_cook_source, target, nil)
         end
     )
 

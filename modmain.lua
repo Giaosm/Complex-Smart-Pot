@@ -17,6 +17,7 @@ local Config = require("config/config_manager")
 Config.Setup({
     language               = GetModConfigData("language"),
     enable_auto_cook       = GetModConfigData("enable_auto_cook"),
+    auto_cook_mode         = GetModConfigData("auto_cook_mode"),
     enable_backpack_check  = GetModConfigData("enable_backpack_check"),
     recipe_select_behavior = GetModConfigData("recipe_select_behavior"),
     enable_hof_compat      = GetModConfigData("enable_hof_compat"),

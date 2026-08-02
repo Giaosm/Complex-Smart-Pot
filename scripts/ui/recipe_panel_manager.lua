@@ -49,7 +49,7 @@ local function WrapCookButtonOnce(btn)
                 end
             end
             if not has_empty_slot then
-                if panel._pending_recipe_name then
+                if panel._auto_cook_mode == "memory" and panel._pending_recipe_name then
                     if panel._auto_cook and panel._cooker_recipes and panel._cooker_recipes[panel._pending_recipe_name] then
                         panel._auto_cook:SaveRecipeMemory(panel._pending_recipe_name, prefab_data)
                     end
@@ -80,11 +80,17 @@ function Manager.CreatePanel(hud, container, is_brewer)
 
     local enable_backpack = Config.GetBackpackCheckMode()
 	local auto_cook_source = Config.GetAutoCookSource()
-	local range_init = auto_cook_source ~= "off" and MemoryStore.GetRangeSearch(30) or nil
+	local auto_cook_mode = Config.GetAutoCookMode()
 	local select_mode = Config.GetSelectMode()
 	local debug_logging = Config.IsDebugLogging()
 	local panel_prefs = MemoryStore.GetOrCreatePanelPrefs()
-	local panel = RecipePanel(Manager._cookbook_data, { strings = STRINGS, tuning = TUNING }, hud.owner, enable_backpack, auto_cook_source, range_init, panel_prefs, select_mode, debug_logging)
+
+	local range_init = nil
+	if auto_cook_source ~= "off" and auto_cook_mode == "memory" then
+		range_init = MemoryStore.GetRangeSearch(30)
+	end
+
+	local panel = RecipePanel(Manager._cookbook_data, { strings = STRINGS, tuning = TUNING }, hud.owner, enable_backpack, auto_cook_source, auto_cook_mode, range_init, panel_prefs, select_mode, debug_logging)
     parent:AddChild(panel)
     local pos = containerwidget:GetPosition()
     panel:SetPosition(pos.x + 100, pos.y)
@@ -92,7 +98,7 @@ function Manager.CreatePanel(hud, container, is_brewer)
     panel:SetAcceptsStacksFromContainer(container)
     panel:StartMonitor(container)
 
-    if auto_cook_source ~= "off" and panel._auto_cook then
+    if auto_cook_source ~= "off" and panel._auto_cook and panel._auto_cook_mode == "memory" then
         local active_name = MemoryStore.GetActiveRecipe()
         if active_name then
             panel._auto_cook:SwitchToRecipe(active_name)

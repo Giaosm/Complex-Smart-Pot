@@ -2,7 +2,7 @@
 local isCh = locale and locale:match("^zh")
 
 name = isCh and "复杂智能锅" or "Complex Smart Pot"
-version = "1.1.7.2"
+version = "1.1.7.3"
 author = "哇唧唧哇"
 forumthread = ""
 dont_starve_compatible = false
@@ -75,6 +75,21 @@ configuration_options = {
             { description = isCh and "冰箱+盐盒+物品栏" or "Fridge+Salt+Inv", data = "fridge_and_inv", hover = isCh and "从冰箱、盐盒和物品栏拿取" or "icebox + saltbox + inventory" },
         },
         default = "off",
+    },
+    {
+        name = "auto_cook_mode",
+        label = isCh and "自动做饭模式" or "Auto Cook Mode",
+        hover = isCh and "需在「自动做饭」开启时生效，关闭后此选项无效"
+            or "Only takes effect when Auto Cook is enabled; this option is ignored while it is off",
+        options = {
+            { description = isCh and "普通模式" or "Normal", data = "normal",
+              hover = isCh and "左击「可做配方」列表中的烹饪按钮自动做饭，右击该按钮10格多锅联动"
+                or "Left-click the Cook button in the Craftable list to auto-cook, right-click for 10-range multi-pot" },
+            { description = isCh and "记忆模式" or "Memory", data = "memory",
+              hover = isCh and "首次烹饪后保存配方，预览条切换多组记忆，一键自动补食材做饭"
+                or "Saves recipe after first cook, preview bar switches memory slots, one-click auto-fill" },
+        },
+        default = "normal",
     },
     {
         name = "enable_backpack_check",

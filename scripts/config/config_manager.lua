@@ -11,6 +11,7 @@ local CACHE_MAX = 500
 local DEFAULTS = {
     language = "auto",
     enable_auto_cook = "off",
+    auto_cook_mode = "normal",
     enable_backpack_check = "off",
     recipe_select_behavior = "click",
     enable_hof_compat = false,
@@ -61,6 +62,7 @@ Config.Get = Get
 
 function Config.GetLanguage() return Get("language") end
 function Config.GetAutoCookSource() return Get("enable_auto_cook") end
+function Config.GetAutoCookMode() return Get("auto_cook_mode") end
 function Config.GetBackpackCheckMode() return Get("enable_backpack_check") end
 function Config.GetSelectMode() return Get("recipe_select_behavior") end
 function Config.IsHofCompat() return Get("enable_hof_compat") == true end

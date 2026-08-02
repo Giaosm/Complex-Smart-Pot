@@ -160,9 +160,23 @@ function CraftSection.Update(popup, section, recipe_item)
         local captured_combo = combo
         btn:SetOnClick(function()
             if popup._cook_fn and popup._current_recipe_data then
-                popup._cook_fn(popup._current_recipe_data.prefab, captured_combo.ingredients)
+                popup._cook_fn(popup._current_recipe_data.prefab, captured_combo.ingredients, false)
             end
         end)
+        local base_on_control = btn.OnControl
+        btn.OnControl = function(self_btn, control, down)
+            if control == CONTROL_SECONDARY and not down then
+                Logger.Logf("[智能锅] 烹饪按钮右键被触发")
+                if popup._cook_fn and popup._current_recipe_data then
+                    popup._cook_fn(popup._current_recipe_data.prefab, captured_combo.ingredients, true)
+                else
+                    Logger.Logf("[智能锅] 烹饪按钮右键无回调: cook_fn=%s recipe=%s",
+                        tostring(popup._cook_fn ~= nil), tostring(popup._current_recipe_data ~= nil))
+                end
+                return true
+            end
+            return base_on_control(self_btn, control, down)
+        end
     end
 
     for i = #combos + 1, #portions_labels do
