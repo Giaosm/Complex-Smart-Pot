@@ -599,10 +599,12 @@ function RecipePanel:_RefreshBackpackRecipes()
     end
 
     -- 库存/容器扫描已统一收口到 inventory_scanner（语义见重构待办第六节行为矩阵）
+    local _t_scan = os.clock()
     local bag_counts, raw_counts = Scanner.CountIngredientsForMode(
         self._player_inst, self._backpack_check_mode, max_per_type,
         self._cached_device_ingredients, self._container
     )
+    Logger.Logf("[智能锅] 扫描耗时 %.1fms", (os.clock() - _t_scan) * 1000)
 
     if next(bag_counts) == nil then
 	self._backpack_recipes = nil
@@ -635,7 +637,9 @@ function RecipePanel:_RefreshBackpackRecipes()
 	self._cached_bag_counts_raw = raw_counts
 
 	if not same then
+	    local _t_match = os.clock()
 	    self._backpack_recipes = self.data:GetMatchingRecipesFromCounts(self._cooker, bag_counts, fixed_counts, self._cooker_recipes, self._max_slots, self._brewing_ingredients, pot_counts, self._use_quantity_matching)
+	    Logger.Logf("[智能锅] 匹配耗时 %.1fms", (os.clock() - _t_match) * 1000)
 	end
 
         Logger.LogScanResult(self._max_slots, self._use_quantity_matching, self._backpack_check_mode, bag_counts)
@@ -839,6 +843,7 @@ function RecipePanel:GetCraftableCombinations(recipe_item)
     if not recipe_item then return nil end
     Logger.Logf("[智能锅] GetCraftableCombinations: recipe=%s qmatch=%s max_slots=%d",
         recipe_item.prefab, tostring(self._use_quantity_matching), self._max_slots or 4)
+    local _t_combo = os.clock()
     local r = self.data:GetRecipeCraftableCombos(
         recipe_item,
         self._cached_bag_counts,
@@ -849,6 +854,7 @@ function RecipePanel:GetCraftableCombinations(recipe_item)
         self._cached_bag_counts_raw,
         self._cached_sorted_defs
     )
+    Logger.Logf("[智能锅] 可做组合耗时 %.1fms", (os.clock() - _t_combo) * 1000)
     Logger.LogLazy(function()
         return string.format("[智能锅] GetCraftableCombinations 返回: recipe=%s result=%s",
             recipe_item.prefab, r and ("count=" .. #r) or "nil")

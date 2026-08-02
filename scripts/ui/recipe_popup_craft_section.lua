@@ -38,25 +38,6 @@ function CraftSection.Update(popup, section, recipe_item)
 
     local combos = popup._get_craftable_fn(recipe_item)
     local combo_count = combos and #combos or 0
-    Logger.Logf("[智能锅] CraftSection.Update: recipe=%s combos=%d", recipe_item.prefab, combo_count)
-    if combos and combo_count > 0 then
-        Logger.LogLazy(function()
-            local lines = {}
-            for i, c in ipairs(combos) do
-                local parts = {}
-                for _, ing in ipairs(c.ingredients or {}) do
-                    if type(ing) == "table" and ing.prefab then
-                        table.insert(parts, ing.prefab .. "=" .. ing.count)
-                    else
-                        table.insert(parts, tostring(ing))
-                    end
-                end
-                table.insert(lines, string.format("[智能锅]   combo[%d]: portions=%d ingredients=%s",
-                    i, c.portions or 1, "[" .. table.concat(parts, ",") .. "]"))
-            end
-            return table.concat(lines, "\n")
-        end)
-    end
     local max_render = Config.GetMaxRenderCombos()
     if max_render > 0 and combo_count > max_render then
         local sliced = {}
