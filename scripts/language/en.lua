@@ -9,17 +9,14 @@ STRINGS.CSP.CATEGORY_MOD       = "Mod"
 STRINGS.CSP.CATEGORY_BUFF      = "Buffs"
 STRINGS.CSP.CATEGORY_CRAFTABLE = "Craft"
 
--- Sort
 STRINGS.CSP.SORT_HUNGER = "Food"
 STRINGS.CSP.SORT_HEALTH = "HP"
 STRINGS.CSP.SORT_SANITY = "San"
 
--- Buttons
 STRINGS.CSP.BTN_AUTO_COOK    = "Auto Cook"
 STRINGS.CSP.BTN_STOP_COOK    = "Stop"
 STRINGS.CSP.BTN_AUTO_COOKING = "Cooking..."
 
--- Popup
 STRINGS.CSP.POPUP_MIN_REQ   = "Min"
 STRINGS.CSP.POPUP_MAX_REQ   = "Max"
 STRINGS.CSP.POPUP_STATS_FMT = "HP%+g | Food%+g | San%+g"
@@ -28,7 +25,6 @@ STRINGS.CSP.POPUP_COOK_FMT  = "Cook%ds"
 STRINGS.CSP.POPUP_SPECIAL   = "Spc:"
 STRINGS.CSP.POPUP_CRAFTABLE = "Craftable"
 
--- Auto Cook
 STRINGS.CSP.AUTO_NEED_RECIPE = "Cook a dish first"
 STRINGS.CSP.AUTO_START       = "Cooking..."
 STRINGS.CSP.AUTO_STOP        = "Stopped"
@@ -37,7 +33,6 @@ STRINGS.CSP.QUICK_NO_MEMORY    = "I don't remember how to make this"
 STRINGS.CSP.QUICK_NO_SPACE     = "I can't carry any more"
 STRINGS.CSP.QUICK_NO_INGREDIENTS = "I don't have enough ingredients"
 
--- Misc
 STRINGS.CSP.MEMORY_CLEARED = "Auto-cook memory cleared"
 STRINGS.CSP.COMBO_LIMIT_SET = "Complex Smart Pot: Max render combos set to "
 STRINGS.CSP.POPUP_COOK_BTN = "Cook"

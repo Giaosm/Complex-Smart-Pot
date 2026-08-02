@@ -24,12 +24,10 @@ function CookbookData:Collect()
     return self
 end
 
--- 公开接口：食材别名表
 function CookbookData:GetIngredientAliases()
     return self._ingredient_aliases
 end
 
--- 公开接口：设备对应的最大 tag 值表（device 传 "brewer" 取酿酒设备的）
 function CookbookData:GetMaxTagValues(device)
     if device == "brewer" then
         return self._brewer_max_tag_values
@@ -37,7 +35,7 @@ function CookbookData:GetMaxTagValues(device)
     return self._max_tag_values
 end
 
--- 懒收集接口：神话/登仙的数据在 SimPostInit 时可能未就绪，UI 打开对应设备时调用
+-- 神话/登仙数据可能延迟就绪，UI 打开对应设备时补收集
 function CookbookData:EnsureCollected(device)
     if device == "alchmy_fur" then
         Collector.EnsureMyth(self)

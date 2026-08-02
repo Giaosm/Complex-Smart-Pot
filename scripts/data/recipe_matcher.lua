@@ -2,8 +2,9 @@
 local cooking = require("cooking")
 local INGREDIENT_ALIASES = require("data/ingredient_aliases")
 local ComboMatcher = require("data/combo_matcher")
+local Config = require("config/config_manager")
 
-local CACHE_MAX = 500
+local CACHE_MAX = Config.GetCacheMax()
 local _possible_cache = {}
 local _cache_keys = {}  -- LRU 顺序，最新在末尾
 
@@ -210,7 +211,6 @@ function Matcher.ClearCache()
     _cache_keys = {}
 end
 
--- 根据锅内/库存食材筛选"可能做成"的料理
 function Matcher.GetPossibleRecipes(db, prefab_list, ingredients, max_slots, max_tag_values, counts, use_quantity_matching)
     if prefab_list == nil or #prefab_list == 0 then
         return nil
@@ -404,7 +404,6 @@ function Matcher.GetRecipeMatchScore(reqs, prefab_list, ingredients)
     return score
 end
 
--- 用 test 函数精确匹配料理（锅内食材完整时）
 function Matcher.GetMatchingRecipes(db, cooker, prefab_list, ingredients, counts)
     if prefab_list == nil or #prefab_list == 0 then
         return nil
@@ -457,7 +456,6 @@ function Matcher.GetMatchingRecipes(db, cooker, prefab_list, ingredients, counts
     return next(matching) and matching or nil
 end
 
--- 按库存计数匹配（委托给底层组合匹配器）
 function Matcher.GetMatchingRecipesFromCounts(db, cooker, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, pot_counts, use_quantity_matching)
     return ComboMatcher.Match(cooker, db.all, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, db._ingredient_aliases, pot_counts, use_quantity_matching)
 end

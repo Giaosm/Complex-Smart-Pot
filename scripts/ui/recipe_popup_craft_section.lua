@@ -28,7 +28,6 @@ function CraftSection.Update(popup, section, recipe_item)
     local pool = section.slot_pool
     local portions_labels = section.portions
 
-    -- 清空旧槽位
     for _, slot in ipairs(pool) do slot:Hide() end
     for _, label in ipairs(portions_labels) do label:Hide() end
     for _, btn in ipairs(section.btns) do btn:Hide() end
@@ -92,7 +91,6 @@ function CraftSection.Update(popup, section, recipe_item)
         local slot_base = (ci - 1) * n
         local py = (ci - 1) * y_step
 
-        -- 食材图标
         for si = 1, n do
             local idx = slot_base + si
             local slot
@@ -126,7 +124,6 @@ function CraftSection.Update(popup, section, recipe_item)
             end
         end
 
-        -- 份数标签
         local label
         if #portions_labels >= ci then
             label = portions_labels[ci]
@@ -139,7 +136,6 @@ function CraftSection.Update(popup, section, recipe_item)
         label:SetString("×" .. combo.portions)
         label:SetColour(0.9, 0.8, 0.3, 1)
 
-        -- 烹饪按钮
         local btn
         if #section.btns >= ci then
             btn = section.btns[ci]
@@ -169,7 +165,6 @@ function CraftSection.Update(popup, section, recipe_item)
         end)
     end
 
-    -- 隐藏多余项
     for i = #combos + 1, #portions_labels do
         portions_labels[i]:Hide()
     end

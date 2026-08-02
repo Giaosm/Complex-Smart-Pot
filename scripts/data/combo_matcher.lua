@@ -1,8 +1,10 @@
 -- 组合匹配：给定食材计数，回溯遍历所有组合找到能做的最高优先级料理
 local cooking = require("cooking")
+local Config = require("config/config_manager")
 
 local ComboMatcher = {}
 
+local CACHE_MAX = Config.GetCacheMax()
 local _match_cache = {}
 local _cache_keys = {}  -- LRU 顺序，最新的在末尾
 
@@ -453,7 +455,7 @@ function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_
         end
     end
     table.insert(_cache_keys, cache_key)
-    if #_cache_keys > 500 then
+    if #_cache_keys > CACHE_MAX then
         local old = table.remove(_cache_keys, 1)
         _match_cache[old] = nil
     end

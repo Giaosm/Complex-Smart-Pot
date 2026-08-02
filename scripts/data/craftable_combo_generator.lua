@@ -3,11 +3,12 @@ local cooking = require("cooking")
 local Matcher = require("data/recipe_matcher")
 local ComboMatcher = require("data/combo_matcher")
 local Logger = require("debug/logger")
+local Config = require("config/config_manager")
 
 local BuildNamesTags = Matcher.BuildNamesTags
 local CheckRecipeByCounts = ComboMatcher.CheckRecipeByCounts
 
-local CACHE_MAX = 500
+local CACHE_MAX = Config.GetCacheMax()
 local NEGATIVE = false  -- 负缓存哨兵：不可制作也缓存，避免每次刷新重跑回溯
 local _combo_cache = {}
 local _cache_keys = {}
@@ -312,7 +313,6 @@ function ComboGen.ClearCache()
     _cache_keys = {}
 end
 
--- 为指定料理生成具体的食材组合 + 份数
 function ComboGen.GetRecipeCraftableCombos(db, recipe_item, bag_counts, pot_counts, cooker, max_slots, use_quantity_matching, raw_bag_counts, sorted_defs)
     if not recipe_item or not bag_counts or next(bag_counts) == nil then
         return nil
@@ -475,7 +475,6 @@ function ComboGen.GetRecipeCraftableCombos(db, recipe_item, bag_counts, pot_coun
     -- 回溯搜索：填充剩余槽位
     local function _search(filled, start_idx, rem)
         if rem == 0 then
-            -- 去重
             local key_parts = {}
             for _, p in ipairs(filled) do table.insert(key_parts, p) end
             table.sort(key_parts)

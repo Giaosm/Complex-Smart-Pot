@@ -76,7 +76,7 @@ function Scanner.CountIngredientsForMode(player_inst, mode, max_per_type, device
 end
 
 -- 自动做饭取货扫描（ScanForAutoCook）：按来源模式列出全部可取食材的槽位列表
--- 返回 { { slot =, cont =, item = }, ... }
+
 local function ShouldScanContainer(container_inst, source)
     if source == "inv" then return false end
     local is_fridge = container_inst.prefab == "icebox" or container_inst.prefab == "saltbox"

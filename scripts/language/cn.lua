@@ -9,17 +9,14 @@ STRINGS.CSP.CATEGORY_MOD      = "模组"
 STRINGS.CSP.CATEGORY_BUFF     = "BUFF"
 STRINGS.CSP.CATEGORY_CRAFTABLE = "可做"
 
--- 排序
 STRINGS.CSP.SORT_HUNGER = "饱食"
 STRINGS.CSP.SORT_HEALTH = "生命"
 STRINGS.CSP.SORT_SANITY = "理智"
 
--- 按钮
 STRINGS.CSP.BTN_AUTO_COOK      = "自动做饭"
 STRINGS.CSP.BTN_STOP_COOK      = "停止做饭"
 STRINGS.CSP.BTN_AUTO_COOKING   = "自动做饭中..."
 
--- 弹窗
 STRINGS.CSP.POPUP_MIN_REQ      = "最低需求"
 STRINGS.CSP.POPUP_MAX_REQ      = "最高限制"
 STRINGS.CSP.POPUP_STATS_FMT    = "生命%+g | 饱食%+g | 理智%+g"
@@ -28,7 +25,6 @@ STRINGS.CSP.POPUP_COOK_FMT     = "烹饪%ds"
 STRINGS.CSP.POPUP_SPECIAL      = "特殊:"
 STRINGS.CSP.POPUP_CRAFTABLE   = "可做配方"
 
--- 自动做饭
 STRINGS.CSP.AUTO_NEED_RECIPE   = "请先用烹饪锅制作一道菜"
 STRINGS.CSP.AUTO_START         = "自动烹饪开始"
 STRINGS.CSP.AUTO_STOP          = "自动烹饪终止"
@@ -37,7 +33,6 @@ STRINGS.CSP.QUICK_NO_MEMORY    = "我不记得这道菜怎么做了"
 STRINGS.CSP.QUICK_NO_SPACE     = "我已经拿不下了"
 STRINGS.CSP.QUICK_NO_INGREDIENTS = "我没有足够的食材"
 
--- 其他
 STRINGS.CSP.MEMORY_CLEARED      = "复杂智能锅：所有自动烹饪记忆已清空"
 STRINGS.CSP.COMBO_LIMIT_SET     = "复杂智能锅：最大渲染组合数已设为 "
 STRINGS.CSP.POPUP_COOK_BTN      = "烹饪"

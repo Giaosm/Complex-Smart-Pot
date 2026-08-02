@@ -79,7 +79,6 @@ function ReqSection.Create(popup, name, y_offset, view_h)
     return { root = root, content = content, pool = {}, scroll = 0, max_rows = 0, visible_rows = 2, scrollbar = scrollbar, view_h = view_h }
 end
 
--- 区域条目池的槽位工厂
 function ReqSection.CreatePoolSlot(parent)
     local slot = parent:AddChild(Widget("slot"))
     slot:Hide()
@@ -91,7 +90,6 @@ function ReqSection.CreatePoolSlot(parent)
     return slot
 end
 
--- 应用滚动位置并刷新滚动条
 function ReqSection.ApplyScroll(section)
     local max_rows = section.max_rows
     local visible_rows = section.visible_rows or 2

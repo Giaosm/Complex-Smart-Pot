@@ -48,7 +48,6 @@ local DEVICES = {
 
 local Detector = {}
 
--- 遍历设备配置表，返回命中的设备定义（未命中返回 nil）
 function Detector.Match(container)
     if container == nil then return nil end
     for _, def in ipairs(DEVICES) do

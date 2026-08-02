@@ -533,7 +533,7 @@ function RecipePanel:SetCooker(cooker_prefab, is_brewer)
         end)
         self._cached_sorted_defs = sorted
     end
-    self._cached_raw_key = nil  -- 失效分类缓存
+    self._cached_raw_key = nil
     self:RefreshDisplay()
 end
 
@@ -827,7 +827,6 @@ function RecipePanel:OnSlotChanged()
     self:SetPotIngredients(prefabs, self._container)
 end
 
--- 返回指定料理的具体食材组合（用于弹窗"可做配方"视图）
 function RecipePanel:GetCraftableCombinations(recipe_item)
     if not recipe_item then return nil end
     Logger.Logf("[智能锅] GetCraftableCombinations: recipe=%s qmatch=%s max_slots=%d",

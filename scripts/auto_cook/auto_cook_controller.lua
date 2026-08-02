@@ -298,7 +298,6 @@ local function DebugPotState(pot, label)
         label, tostring(empty), tostring(full), tostring(can_open), tostring(anim_loop), tostring(anim_pre), tostring(busy), tostring(stewer_cooking))
 end
 
--- 等待烹饪真正开始（轮询容器状态/动画/stewer，而非固定等待时间）
 local function WaitForCookingStart(pot, before_state, timeout)
     timeout = timeout or 5
     local start_time = GetTime()

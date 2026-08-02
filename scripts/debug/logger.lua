@@ -23,7 +23,6 @@ function Logger.LogLazy(fn)
     print(fn())
 end
 
--- 语义化接口：食材扫描结果
 function Logger.LogScanResult(max_slots, use_quantity_matching, mode, bag_counts)
     if not Config.IsDebugLogging() then return end
     local items = {}
@@ -34,7 +33,6 @@ function Logger.LogScanResult(max_slots, use_quantity_matching, mode, bag_counts
     print("  [" .. table.concat(items, "、") .. "]")
 end
 
--- 语义化接口：「可做」匹配结果
 function Logger.LogMatchResult(recipes)
     if not Config.IsDebugLogging() then return end
     if recipes then
