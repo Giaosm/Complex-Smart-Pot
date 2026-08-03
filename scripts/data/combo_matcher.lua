@@ -1,6 +1,7 @@
 -- 组合匹配：给定食材计数，回溯遍历所有组合找到能做的最高优先级料理
 local cooking = require("cooking")
 local Config = require("config/config_manager")
+local Logger = require("debug/logger")
 
 local ComboMatcher = {}
 
@@ -420,6 +421,26 @@ local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cook
     end
 
     try_combine(1, 0, free_slots)
+
+    -- 调试统计：候选/最终 料理按 原版/模组 拆分（与 UI 分类口径一致：is_vanilla == true 为原版）
+    local cand_vanilla, cand_mod = 0, 0
+    local fin_vanilla, fin_mod = 0, 0
+    for _, item in ipairs(candidate_items) do
+        if item.is_vanilla then
+            cand_vanilla = cand_vanilla + 1
+        else
+            cand_mod = cand_mod + 1
+        end
+        if result[item.prefab] then
+            if item.is_vanilla then
+                fin_vanilla = fin_vanilla + 1
+            else
+                fin_mod = fin_mod + 1
+            end
+        end
+    end
+    Logger.Logf("[智能锅] MatchNonStacked: 候选料理%d(模组%d+原版%d) 最终%d(模组%d+原版%d)",
+        #candidate_items, cand_mod, cand_vanilla, fin_mod + fin_vanilla, fin_mod, fin_vanilla)
     return next(result) and result or nil
 end
 
