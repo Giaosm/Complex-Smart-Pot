@@ -326,6 +326,8 @@ function ComboGen.GetRecipeCraftableCombos(db, recipe_item, bag_counts, pot_coun
     for k, v in pairs(raw_bag_counts or {}) do keys[#keys + 1] = "r" .. k .. "=" .. v end
     table.sort(keys)
     cache_key = cache_key .. table.concat(keys, ";")
+    -- 环境指纹：季节/月相/节日会影响部分模组料理的可做性，纳入 key 使环境变化时缓存自动失效
+    cache_key = cache_key .. "|E:" .. Logger.GetEnvironmentFingerprint()
     if _combo_cache[cache_key] ~= nil then
         return CacheGet(cache_key)
     end

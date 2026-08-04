@@ -3,6 +3,7 @@ local cooking = require("cooking")
 local INGREDIENT_ALIASES = require("data/ingredient_aliases")
 local ComboMatcher = require("data/combo_matcher")
 local Config = require("config/config_manager")
+local Logger = require("debug/logger")
 
 local CACHE_MAX = Config.GetCacheMax()
 local _possible_cache = {}
@@ -228,6 +229,8 @@ function Matcher.GetPossibleRecipes(db, prefab_list, ingredients, max_slots, max
         table.sort(ck)
         cache_key = cache_key .. "|" .. table.concat(ck, ",")
     end
+    -- 环境指纹：季节/月相/节日会影响部分模组料理的可做性，纳入 key 使环境变化时缓存自动失效
+    cache_key = cache_key .. "|E:" .. Logger.GetEnvironmentFingerprint()
     local cached = CacheGet(cache_key)
     if cached then
         return cached

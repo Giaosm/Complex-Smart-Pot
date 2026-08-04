@@ -50,12 +50,39 @@ LoadLanguage()
 local ContainerDetector = require("container/container_detector")
 local CookbookData = require("data/cookbook_data")
 local PanelManager = require("ui/recipe_panel_manager")
+local Logger = require("debug/logger")
 
 local g_cookbook_data = CookbookData()
 PanelManager.Setup(g_cookbook_data)
 
+-- 环境基准指纹（季节|月相|节日）。部分模组料理的配方需求(recipe_requirements)
+-- 只在收集时反推一次，若环境变化不重新收集，图鉴配方可见性会"冻结"在进游戏那一刻。
+-- 故监听季节/月相变化，变化时重新收集并实时刷新所有面板。
+local _last_env_fingerprint = nil
+
+local function RefreshOnEnvironmentChange()
+    local fp = Logger.GetEnvironmentFingerprint()
+    if fp == _last_env_fingerprint then return end
+    _last_env_fingerprint = fp
+    if Logger.IsEnabled() then
+        print("[智能锅] 环境变化(" .. fp .. ")，重新收集料理数据")
+    end
+    g_cookbook_data:Collect()
+    -- 强制刷新已打开的面板：图鉴配方可见性 + 可做检测按新环境实时更新（无需重新开关锅）
+    PanelManager.ForceRefreshPanels()
+end
+
 AddSimPostInit(function()
     g_cookbook_data:Collect()
+    _last_env_fingerprint = Logger.GetEnvironmentFingerprint()
+
+    local TheWorld = _G.TheWorld
+    if TheWorld then
+        -- 进入游戏后只有季节和月相会变化（节日固定），故只监听这两者。
+        -- seasontick 每天推送，指纹去重后仅在真正换季时生效；月相同理。
+        TheWorld:ListenForEvent("seasontick", RefreshOnEnvironmentChange)
+        TheWorld:ListenForEvent("moonphasechanged2", RefreshOnEnvironmentChange)
+    end
 end)
 
 -- 控制台命令：清空自动做饭配方记忆

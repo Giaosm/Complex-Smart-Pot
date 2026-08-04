@@ -155,6 +155,21 @@ function Manager.DestroyPanel(container)
     return false
 end
 
+-- 强制刷新所有面板：清空图鉴列表缓存(_cached_raw_key)与可做检测缓存(_cached_bag_counts)，
+-- 让面板立即按最新数据重渲染。用于环境（季节/月相）变化后，无需重新开关锅即可实时更新。
+function Manager.ForceRefreshPanels()
+    for _, panel in pairs(Manager._panels) do
+        if panel then
+            panel._cached_raw_key = nil      -- 图鉴列表强制重新构建（拿到最新 data.all）
+            panel._cached_raw = nil
+            panel._cached_bag_counts = nil   -- 可做检测强制重新匹配（绕过食材相同即跳过）
+            panel._backpack_recipes = nil
+            if panel.MarkBackpackDirty then panel:MarkBackpackDirty() end
+            if panel.RefreshDisplay then panel:RefreshDisplay() end
+        end
+    end
+end
+
 -- 外部容器（背包/箱子/冰箱等）内容变化时，通知所有面板刷新「可做」检测（防抖）
 function Manager.NotifyAll()
     if Manager._notify_debounce_task then return end

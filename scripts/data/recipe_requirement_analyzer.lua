@@ -428,36 +428,6 @@ function Analyzer.Analyze(test_func, ingredients)
     if type(test_func) ~= "function" then return nil end
     if not ingredients then return nil end
 
-    -- 临时 patch 环境，防止季节条件的短路导致无法分析配方。
-    -- 用代理表替换 TheWorld：test 函数读到的 state 四季全真，其余字段透传到真实 TheWorld，
-    -- 完全不写真实 state（旧实现直接改真实 TheWorld.state 的季节标志且从不恢复，是个 bug）
-    local old_TheWorld = _G.TheWorld
-    local old_SEASONAL_FOOD
-    if _G.TUNING then
-        old_SEASONAL_FOOD = _G.TUNING.SEASONAL_FOOD
-        _G.TUNING.SEASONAL_FOOD = true
-    end
-
-    local fake_state = {
-        isspring = true, issummer = true, isautumn = true, iswinter = true,
-    }
-    if old_TheWorld and old_TheWorld.state then
-        -- 未覆盖的 state 字段（如 season、isdusk 等）透传到真实 state
-        setmetatable(fake_state, { __index = old_TheWorld.state })
-    end
-    if old_TheWorld then
-        _G.TheWorld = setmetatable({ state = fake_state }, { __index = old_TheWorld })
-    else
-        _G.TheWorld = { state = fake_state }
-    end
-
-    local function restore()
-        _G.TheWorld = old_TheWorld
-        if _G.TUNING then
-            _G.TUNING.SEASONAL_FOOD = old_SEASONAL_FOOD
-        end
-    end
-
     local allnames = {}
     local alltags = {}
     for name, data in pairs(ingredients) do
@@ -475,14 +445,12 @@ function Analyzer.Analyze(test_func, ingredients)
         SmartSearch(test_func, allnames, alltags)
 
     if not simple then
-        restore()
         return nil
     end
 
     local ok = MinimizeRecipe(test_func, simple, allnames, alltags,
                               raw_names, raw_tags, np, tp)
     if not ok then
-        restore()
         return nil
     end
 
@@ -528,8 +496,6 @@ function Analyzer.Analyze(test_func, ingredients)
             end
         end
     end
-
-    restore()
 
     return simple
 end

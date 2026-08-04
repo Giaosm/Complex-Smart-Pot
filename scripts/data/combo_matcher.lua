@@ -36,6 +36,9 @@ local function BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipe
         table.insert(parts, "R:" .. table.concat(names, ","))
     end
 
+    -- 环境指纹：季节/月相/节日会影响部分模组料理的可做性，纳入 key 使环境变化时缓存自动失效
+    table.insert(parts, "E:" .. Logger.GetEnvironmentFingerprint())
+
     return table.concat(parts, "|")
 end
 

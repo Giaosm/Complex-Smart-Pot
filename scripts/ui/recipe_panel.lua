@@ -646,6 +646,7 @@ function RecipePanel:_RefreshBackpackRecipes()
 	    if Logger.IsEnabled() then
 	        Logger.Logf("[智能锅] 匹配耗时 %.1fms", (os.clock() - _t_match) * 1000)
 	    end
+	    Logger.LogWorldContext()
 	end
 
         Logger.LogScanResult(self._max_slots, self._use_quantity_matching, self._backpack_check_mode, bag_counts)
