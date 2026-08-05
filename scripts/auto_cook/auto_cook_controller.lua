@@ -436,6 +436,11 @@ local function Cook(prefab, data, range, auto_cook_source, target_cont, quiet, p
                     end
                 end
             elseif not quiet then
+                -- TODO(待解决): 客户端收获神话炼丹炉(FUR_HARVEST)超时。
+                -- 现象：客户端角色站在原地不走向炼丹炉，WaitForHarvestDone 5秒超时，
+                --        IsHarvestDone 的 container:IsEmpty() 对炼丹炉不可靠(GetItems空但IsEmpty=false)。
+                -- 主机正常；普通烹饪锅(原版HARVEST)正常。疑似 FUR_HARVEST 为 instant 动作，
+                -- 客户端 PreviewAction 不触发移动，且容器判定不可靠。已尝试"先WalkToEntity再收获"无效。
                 local before_state = CaptureContainerState(GetPotContainer(cont))
                 Action.DoMouseAction(act, right)
                 if not WaitForHarvestDone(cont, before_state) then

@@ -104,6 +104,42 @@ local function _by_hash(a, b)
     return a.defaultsorthash < b.defaultsorthash
 end
 
+-- 收集辅助：确保分类表存在
+local function _EnsureCategory(db, category)
+    if db.categories[category] == nil then
+        db.categories[category] = {}
+    end
+    return db.categories[category]
+end
+
+-- 收集辅助：构建以现有 prefab 为 key 的去重表
+local function _BuildExisting(db)
+    local existing = {}
+    for _, item in ipairs(db.all) do
+        existing[item.prefab] = true
+    end
+    return existing
+end
+
+-- 收集辅助：把条目写入 分类表 + mod 分类 + 总表
+-- 原版食谱不归入 mod 分类，通过 with_mod=false 控制
+local function _InsertItem(db, category, item, with_mod)
+    table.insert(db.categories[category], item)
+    if with_mod ~= false then
+        table.insert(db.categories["mod"], item)
+    end
+    table.insert(db.all, item)
+end
+
+-- 收集辅助：分析 test 并建索引（无 test 则仅建索引）
+local function _BuildRequirements(db, item, test, ingredients)
+    if test ~= nil then
+        item.recipe_requirements = Analyzer.Analyze(test, ingredients)
+    end
+    Analyzer.BuildRequirementsIndex(item)
+    return item
+end
+
 local Collector = {}
 
 -- 原版 + 官方"mod"分类食谱
@@ -115,26 +151,15 @@ local function CollectVanilla(db)
 
     local seen = {}
     for category, recipes in pairs(cookbook_recipes) do
-        if db.categories[category] == nil then
-            db.categories[category] = {}
-        end
-
+        _EnsureCategory(db, category)
         for prefab, recipe_def in pairs(recipes) do
             if not recipe_def.no_cookbook and not seen[prefab] then
                 seen[prefab] = true
                 local item = _BuildRecipeItem(prefab, recipe_def, category, {
                     is_vanilla = _vanilla_recipes[prefab] or false,
                 })
-
-                if recipe_def.test ~= nil then
-                    item.recipe_requirements = Analyzer.Analyze(
-                        recipe_def.test, cooking.ingredients
-                    )
-                end
-                Analyzer.BuildRequirementsIndex(item)
-
-                table.insert(db.categories[category], item)
-                table.insert(db.all, item)
+                _BuildRequirements(db, item, recipe_def.test, cooking.ingredients)
+                _InsertItem(db, category, item, false)
             end
         end
     end
@@ -156,16 +181,9 @@ function Collector.CollectBrewer(db)
     db._brewer_ingredients = brewingredients
     db._brewer_max_tag_values = _ComputeMaxTagValues(brewingredients)
 
-    local existing = {}
-    for _, item in ipairs(db.all) do
-        existing[item.prefab] = true
-    end
-
+    local existing = _BuildExisting(db)
     for category, recipes in pairs(hof_brewing.brewbook_recipes) do
-        if db.categories[category] == nil then
-            db.categories[category] = {}
-        end
-
+        _EnsureCategory(db, category)
         for prefab, recipe_def in pairs(recipes) do
             if not recipe_def.no_brewbook and not existing[prefab] then
                 existing[prefab] = true
@@ -173,17 +191,8 @@ function Collector.CollectBrewer(db)
                     atlas_override = recipe_def.brewbook_atlas,
                     is_brewer = true,
                 })
-
-                if recipe_def.test ~= nil then
-                    item.recipe_requirements = Analyzer.Analyze(
-                        recipe_def.test, brewingredients
-                    )
-                end
-                Analyzer.BuildRequirementsIndex(item)
-
-                table.insert(db.categories[category], item)
-                table.insert(db.categories["mod"], item)
-                table.insert(db.all, item)
+                _BuildRequirements(db, item, recipe_def.test, brewingredients)
+                _InsertItem(db, category, item)
             end
         end
     end
@@ -197,14 +206,8 @@ function Collector.CollectMyth(db)
         return false
     end
 
-    if db.categories["alchmy_fur"] == nil then
-        db.categories["alchmy_fur"] = {}
-    end
-
-    local existing = {}
-    for _, item in ipairs(db.all) do
-        existing[item.prefab] = true
-    end
+    _EnsureCategory(db, "alchmy_fur")
+    local existing = _BuildExisting(db)
 
     local myth_recipes = _G.TUNING and _G.TUNING.MYTH_PILL_RECIPES
 
@@ -229,10 +232,7 @@ function Collector.CollectMyth(db)
                     recipe_requirements = _BuildMythRequirements(prefab, myth_recipes),
                 })
                 Analyzer.BuildRequirementsIndex(item)
-
-                table.insert(db.categories["alchmy_fur"], item)
-                table.insert(db.categories["mod"], item)
-                table.insert(db.all, item)
+                _InsertItem(db, "alchmy_fur", item)
             end
         end
     end
@@ -248,16 +248,9 @@ function Collector.CollectXd(db)
         return false
     end
 
-    local existing = {}
-    for _, item in ipairs(db.all) do
-        existing[item.prefab] = true
-    end
-
+    local existing = _BuildExisting(db)
     for device, recipes in pairs(xd_pill_recipes) do
-        if db.categories[device] == nil then
-            db.categories[device] = {}
-        end
-
+        _EnsureCategory(db, device)
         for prefab, data in pairs(recipes) do
             if not existing[prefab] and data.recipe then
                 existing[prefab] = true
@@ -305,10 +298,7 @@ function Collector.CollectXd(db)
                     is_vanilla = false,
                 })
                 Analyzer.BuildRequirementsIndex(item)
-
-                table.insert(db.categories[device], item)
-                table.insert(db.categories["mod"], item)
-                table.insert(db.all, item)
+                _InsertItem(db, device, item)
             end
         end
     end
@@ -329,6 +319,12 @@ function Collector.CollectAll(db)
     for cat, _ in pairs(db.categories) do
         db.categories[cat] = {}
     end
+
+    -- 统一清空所有标志位与辅助数据，确保每次全量重建、不留旧值
+    db._max_tag_values = nil
+    db._brewer_max_tag_values = nil
+    db._brewer_ingredients = nil
+    db._myth_collected = nil
 
     if not CollectVanilla(db) then
         return db
