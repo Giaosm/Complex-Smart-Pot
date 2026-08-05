@@ -1,5 +1,4 @@
--- 面板管理器：管理所有已打开的 RecipePanel 实例
--- 响应容器开关创建/销毁面板，绑定外部容器的物品变化通知，承接烹饪按钮包装派发
+-- 面板管理器：管理所有已打开的 RecipePanel 实例，响应容器开关、外部容器变化通知
 local RecipePanel = require("ui/recipe_panel")
 local Config = require("config/config_manager")
 local MemoryStore = require("auto_cook/recipe_memory")
@@ -23,10 +22,9 @@ function Manager.GetPanel(container)
     return Manager._panels[container]
 end
 
--- 包装烹饪按钮：在烹饪开始且锅满时，把当前食材保存为配方记忆。
--- 注意：rep:GetWidget() 返回的是 containers.params 里的共享表（containers.lua 的 widgetsetup 是浅拷贝，
--- 且 portablecookpot 与 cookpot 共享同一张表），因此全局只能包装一次——否则每次开面板都会叠加一层闭包，
--- 永久污染共享配置并让旧 panel 无法被回收。包装后通过 Manager._panels[ent] 查当前面板派发。
+-- 包装烹饪按钮：烹饪开始且锅满时把当前食材存为配方记忆
+-- 注意：rep:GetWidget() 返回共享表（cookpot 与 portablecookpot 共享），全局只能包装一次，
+-- 否则叠加闭包污染共享配置。包装后通过 Manager._panels[ent] 查当前面板派发。
 local function WrapCookButtonOnce(btn)
     if btn._csp_wrapped then return end
     btn._csp_wrapped = true
@@ -127,11 +125,9 @@ function Manager.CreatePanel(hud, container, is_brewer)
     local rep = container.replica and container.replica.container
     local btn = rep and rep:GetWidget() and rep:GetWidget().buttoninfo
     if btn and btn.fn then
-        -- 记录烹饪按钮原始函数供自动做饭调用（必须存原始函数，而非包装后的版本）
         if auto_cook_source ~= "off" then
             panel._auto_cook:SetStewerFn(container.prefab, btn._csp_orig_fn or btn.fn)
         end
-        -- 包装烹饪按钮（全局只包装一次，见 WrapCookButtonOnce 注释）
         WrapCookButtonOnce(btn)
     end
 
@@ -144,25 +140,21 @@ function Manager.DestroyPanel(container)
     if panel ~= nil then
         panel:StopMonitor()
         panel._pending_recipe_name = nil
-        -- 任务队列是全局共享实例（见 auto_cook/auto_cook_controller.lua），不随面板销毁：
-        -- QuickCook/Execute 的流程就是先关闭面板再注册任务，随面板销毁会把刚注册的任务杀掉
         panel:Kill()
         Manager._panels[container] = nil
-        -- 持久化面板偏好（分类/排序等改动随 blob 一并落盘）
         MemoryStore.Save()
         return true
     end
     return false
 end
 
--- 强制刷新所有面板：清空图鉴列表缓存(_cached_raw_key)与可做检测缓存(_cached_bag_counts)，
--- 让面板立即按最新数据重渲染。用于环境（季节/月相）变化后，无需重新开关锅即可实时更新。
+-- 强制刷新所有面板：清空图鉴列表与可做检测缓存，按最新数据重渲染（环境变化后无需重开锅）
 function Manager.ForceRefreshPanels()
     for _, panel in pairs(Manager._panels) do
         if panel then
-            panel._cached_raw_key = nil      -- 图鉴列表强制重新构建（拿到最新 data.all）
+            panel._cached_raw_key = nil
             panel._cached_raw = nil
-            panel._cached_bag_counts = nil   -- 可做检测强制重新匹配（绕过食材相同即跳过）
+            panel._cached_bag_counts = nil
             panel._backpack_recipes = nil
             if panel.MarkBackpackDirty then panel:MarkBackpackDirty() end
             if panel.RefreshDisplay then panel:RefreshDisplay() end
@@ -170,7 +162,7 @@ function Manager.ForceRefreshPanels()
     end
 end
 
--- 外部容器（背包/箱子/冰箱等）内容变化时，通知所有面板刷新「可做」检测（防抖）
+-- 外部容器内容变化时通知所有面板刷新「可做」检测（防抖）
 function Manager.NotifyAll()
     if Manager._notify_debounce_task then return end
     if not ThePlayer then

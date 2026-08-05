@@ -13,15 +13,13 @@ local RANGE_MIN = 5
 local RANGE_MAX = 99
 local NORMAL_MODE_RANGE = 10
 
--- 烹饪确认与重试：stewer_fn 点击后最多等 1 秒确认，未确认则重试（重新同步食材+点击），最多 3 次尝试
+-- 烹饪确认与重试：点击后最多等 1 秒确认，未确认则重试，最多 3 次
 local MAX_COOK_ATTEMPTS = 3
 local COOK_CONFIRM_TIMEOUT = 1
--- 找不到可操作设备时的轮询间隔（等待烹饪完成/收取，秒级状态变化无需每帧扫描）
+-- 找不到可操作设备时的轮询间隔
 local IDLE_POLL_INTERVAL = FRAMES * 15
 
--- 共享任务队列：所有权不跟随 panel 生命周期（QuickCook/Execute 先关闭容器面板再注册任务，
--- 若队列随面板销毁，任务会被立即杀掉）；同时保证 playercontroller.OnControl 全局只被包装一次，
--- 多面板共存（锅+酒桶）时不会出现输入劫持链互相拆除的问题
+-- 共享任务队列：所有权不跟随 panel 生命周期（否则面板销毁会杀掉任务）
 local shared_task_queue = nil
 local function GetSharedTaskQueue()
     if not shared_task_queue then
@@ -48,9 +46,7 @@ local function IGetElement(tbl, fn)
     end
 end
 
--- 校验食材列表是否适合当前设备槽位规则
--- 普通设备：食材数量必须严格等于槽位数
--- 特殊设备（如炼丹炉）：总数量可超过槽位，但不同种类数不能超过槽位
+-- 校验食材是否适合设备槽位规则（普通设备数量=槽位；特殊设备种类数≤槽位）
 local function ValidateIngredientsForCooker(ingredients, max_slots, use_quantity)
     if not ingredients or #ingredients == 0 then
         return false, "empty"
@@ -124,7 +120,6 @@ local function IsContainerOpenable(container)
         local ok, v = pcall(function() return container:CanBeOpened() end)
         if ok then return v end
     end
-    -- 服务端 components.container 没有 CanBeOpened 方法，直接读字段
     if container.canbeopened ~= nil then
         return container.canbeopened
     end
@@ -169,9 +164,7 @@ local function IsContainerBusy(pot)
     return false
 end
 
--- 客户端：通过动画 + 容器锁定状态推断烹饪是否已经开始
--- 烹饪前：能打开；烹饪后：锁定（canbeopened=false）。
--- 注意容器关闭后 replica 的 IsEmpty/IsFull 会返回 nil，所以不依赖它们。
+-- 客户端：通过动画 + 容器锁定状态推断烹饪是否已开始（烹饪前能打开，烹饪后锁定）
 local function IsCookingStarted(pot, before_state)
     if not pot or not pot:IsValid() then return false end
     if IsStewerCooking(pot) then return true end
@@ -184,8 +177,7 @@ local function IsCookingStarted(pot, before_state)
     if can_open == nil then return false end
     local now_locked = not can_open
 
-    -- 我们调用 stewer_fn 前已经确认容器是满且可打开的；
-    -- 只要现在变成锁定，就说明服务器已经开始烹饪。
+    -- 烹饪前已确认满且可打开，只要现在锁定即已开始烹饪
     if before_state and before_state.full and before_state.can_open then
         return now_locked
     end
@@ -207,7 +199,7 @@ local function IsHarvestDone(pot, before_state)
     if before_state and not before_state.can_open and can_open then
         return true
     end
-    -- 炼丹炉等收取后仍不可打开的容器：以容器变空判定收获完成
+    -- 收取后仍不可打开的容器（如炼丹炉）：以容器变空判定收获完成
     if not can_open then
         local ok, empty = pcall(function() return container:IsEmpty() end)
         if ok and empty then return true end
@@ -247,8 +239,7 @@ local function GetContainerItemCounts(container)
     return counts
 end
 
--- 等待容器处于可点击“烹饪”的状态：不 busy、能打开、且实际食材数量满足 data 要求
--- 普通锅 data 是 4 个食材，必须占满 4 个槽；炼丹炉/酿酒桶等数量匹配设备则按堆叠数量判断
+-- 等待容器可点击"烹饪"：不 busy、能打开、食材数量满足 data 要求
 local function IsContainerReadyForCook(pot, data)
     if not pot or not pot:IsValid() then return false end
     local container = GetPotContainer(pot)

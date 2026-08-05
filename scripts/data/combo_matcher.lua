@@ -9,6 +9,7 @@ local CACHE_MAX = Config.GetCacheMax()
 local _match_cache = {}
 local _cache_keys = {}  -- LRU 顺序，最新的在末尾
 
+
 local function BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
     local parts = {}
     table.insert(parts, tostring(max_slots))
@@ -58,7 +59,7 @@ local function BuildNamesTags(prefab_list, ingredient_aliases, ingredients)
     return names, tags
 end
 
--- 快速预过滤：料理所需的食材类型必须在 bag/fixed/pot 中至少出现一种
+-- 预过滤：料理所需食材类型在 bag/fixed/pot 中至少出现一种
 local function PrefilterRecipe(item, bag_counts, fixed_counts, pot_counts)
     local req_types = item._required_types
     if not req_types or not next(req_types) then
@@ -151,9 +152,7 @@ local function CheckRecipeByCounts(item, names, tags, counts, ingredients)
     return true
 end
 
--- 按数量向量判断（用于炼丹炉等可堆叠、单个 slot 可放多份同种食材的设备）。
--- 一个 slot 可以放多个同种食材，不需要枚举 slot 分配，
--- 而是判断能否从 bag+pot 中选出一份满足 min 需求、不超过 max 限制的输入。
+-- 数量向量匹配：用于可堆叠设备（单 slot 可放多份同种食材），判断能否从 bag+pot 满足 min 且不超 max
 local function MatchByQuantity(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts)
     local pot_counts_combined = {}
     for name, count in pairs(fixed_counts or {}) do
@@ -169,7 +168,7 @@ local function MatchByQuantity(cooker, all_items, bag_counts, fixed_counts, cook
         if cooker_ok and PrefilterRecipe(item, bag_counts, fixed_counts, pot_counts) then
             local reqs = item.recipe_requirements
             if not reqs then
-                -- 没有反向推导出的需求，保守跳过（避免误报）
+                -- 无反向推导需求，保守跳过（避免误报）
             else
                 local ok = true
                 local min_names = {}
@@ -299,7 +298,7 @@ local function MatchByQuantity(cooker, all_items, bag_counts, fixed_counts, cook
     return next(result) and result or nil
 end
 
--- 不可堆叠设备：slot 级回溯，但只枚举相关食材类型
+-- 不可堆叠设备：slot 级回溯，只枚举相关食材类型
 local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts)
     local total_fixed = 0
     for _, c in pairs(fixed_counts) do
@@ -425,8 +424,7 @@ local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cook
 
     try_combine(1, 0, free_slots)
 
-    -- 调试统计：候选/最终 料理按 原版/模组 拆分（与 UI 分类口径一致：is_vanilla == true 为原版）
-    -- 仅在调试开关开启时统计，避免任何运行时开销
+    -- 调试统计：候选/最终料理按原版/模组拆分（仅在调试开关开启时）
     if Logger.IsEnabled() then
         local cand_vanilla, cand_mod = 0, 0
         local fin_vanilla, fin_mod = 0, 0

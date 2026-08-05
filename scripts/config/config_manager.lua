@@ -1,5 +1,5 @@
--- 配置管理：接收 modmain 集中读取的配置，对外提供语义化访问接口
--- 运行在 _G 环境（strict 模式），禁止调用任何 mod API（GetModConfigData 等）
+-- 配置管理：接收 modmain 读取的配置，对外提供访问接口
+-- 运行在 _G 环境（strict 模式），禁止调用 mod API
 
 local CSP_SHOW_VIEWPORT_BORDER = false
 local CSP_DEBUG_LOGGING = false
@@ -24,14 +24,13 @@ local DEFAULTS = {
 
 local Config = { _data = nil }
 
--- 旧版布尔配置兼容转换：true -> "inv"，false/nil -> "off"
+-- 旧版布尔配置兼容：true -> "inv"，false/nil -> "off"
 local function NormalizeSourceMode(v)
     if v == true then return "inv" end
     if v == false then return "off" end
     return v
 end
 
--- 由 modmain 调用，传入 GetModConfigData 读取到的原始配置表
 function Config.Setup(raw)
     raw = raw or {}
     local d = {}

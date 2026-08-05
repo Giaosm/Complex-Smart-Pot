@@ -1,13 +1,7 @@
--- 容器检测：判断容器类型（烹饪锅/酿酒桶/炼丹炉）
--- 设备列表配置表化：新增设备类型（如其他模组的炼丹炉）只需在 DEVICES 追加一条，
--- 或通过 ContainerDetector.RegisterDevice(def) 在外部注册
+-- 容器检测：判断容器类型（烹饪锅/酿酒桶/炼丹炉），配置表驱动
 local Config = require("config/config_manager")
 
--- 每条设备定义：
---   id         设备标识
---   is_brewer  是否酿酒设备（面板据此切换 brewingredients / 3 槽逻辑）
---   config_key config_manager 的布尔开关接口名（nil 表示不校验配置，始终启用）
---   test       fn(container) -> bool
+-- 设备定义：id / is_brewer(酿酒设备) / config_key(开关接口名，nil 始终启用) / test(判定函数)
 local DEVICES = {
     {
         id = "cookpot",
@@ -59,12 +53,11 @@ function Detector.Match(container)
 end
 
 -- 供外部扩展新设备类型，追加到检测链末尾
--- def 结构同 DEVICES 条目；config_key 可留空表示始终启用
 function Detector.RegisterDevice(def)
     table.insert(DEVICES, def)
 end
 
--- 单类型判断的便捷接口（兼容旧调用风格，配置开关改由 config_manager 提供）
+-- 单类型判断便捷接口
 local function IsType(container, id)
     local def = Detector.Match(container)
     return def ~= nil and def.id == id

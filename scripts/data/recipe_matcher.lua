@@ -217,8 +217,7 @@ function Matcher.GetPossibleRecipes(db, prefab_list, ingredients, max_slots, max
         return nil
     end
 
-    -- 缓存键：prefab 列表必须先排序——调用方用 pairs 遍历槽位构建列表，顺序不保证，
-    -- 不排序会导致相同食材集产生不同 key，缓存命中率不稳且缓存表无界增长
+    -- 缓存键：prefab 列表必须排序（调用方用 pairs 遍历，顺序不保证，否则缓存命中不稳）
     local sorted_prefabs = {}
     for _, p in ipairs(prefab_list) do table.insert(sorted_prefabs, p) end
     table.sort(sorted_prefabs)
@@ -329,9 +328,7 @@ function Matcher.GetPossibleRecipes(db, prefab_list, ingredients, max_slots, max
                 end
             end
             if ok then
-                -- 检查食材是否满足配方的最低需求，含兄弟食材组的最小数量约束
-                -- 没有 test 函数的配方（如丹药）minnames 是堆叠数量，按食材种类计槽位
-                -- 已经在锅里的食材只差数量不差槽位，只有尚未放入的食材种类才需要额外槽位
+                -- 检查最低需求；无 test 的配方（如丹药）minnames 按堆叠数量计槽位
                 if not item.recipe_def.test and reqs.minnames then
                     local needed_slots = 0
                     for name, min_amt in pairs(reqs.minnames) do

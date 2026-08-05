@@ -1,5 +1,5 @@
--- 料理数据收集：原版食谱 + Heap of Foods 酿酒 + 神话炼丹 + 登仙炼丹
--- 所有收集函数操作同一个 db（data/cookbook_data.lua 的实例），写入 db.categories / db.all
+-- 料理数据收集：原版食谱 + HOF 酿酒 + 神话炼丹 + 登仙炼丹
+-- 所有收集函数操作同一个 db 实例，写入 db.categories / db.all
 local cooking = require("cooking")
 local Analyzer = require("data/recipe_requirement_analyzer")
 local ResolveIcon = require("utils/resolveinventoryitemassets")
@@ -190,8 +190,7 @@ function Collector.CollectBrewer(db)
     return true
 end
 
--- 神话书说炼丹炉食谱；返回是否收集成功
--- 注意：调用方只在成功时才应标记已收集，以便模组数据延迟就绪时可以重试
+-- 神话书说炼丹炉食谱；返回是否成功（调用方只在成功时标记已收集，便于数据延迟就绪时重试）
 function Collector.CollectMyth(db)
     local pill_refining = rawget(_G, "MYTH_PillRefining")
     if not pill_refining then
@@ -268,8 +267,7 @@ function Collector.CollectXd(db)
                     minnames[ingredient] = count
                 end
 
-                -- 处理替代配方（alternative_recipe = {[1] = {trunk_summer=1, trunk_winter=1}}）
-                -- 同组内任意一个食材即可，数量取组内任意一个 count（通常相同）
+                -- 替代配方：同组内任意一个食材即可，数量取组内任意 count
                 local analog_groups = nil
                 if data.alternative_recipe then
                     analog_groups = {}
@@ -317,7 +315,7 @@ function Collector.CollectXd(db)
     return true
 end
 
--- 神话食谱的懒收集：成功才标记，允许重试（模组数据可能在 SimPostInit 时尚未就绪）
+-- 神话食谱懒收集：成功才标记，允许重试
 function Collector.EnsureMyth(db)
     if db._myth_collected then return end
     if Collector.CollectMyth(db) then

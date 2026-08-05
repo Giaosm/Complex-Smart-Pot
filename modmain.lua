@@ -1,5 +1,5 @@
--- 模组入口：初始化顺序、配置读取、Hook 注册与事件转发；具体逻辑见各子模块
--- 注意：游戏不会给模组 env 安装元表，下面这行是 modmain 内裸名访问 _G 全局（STRINGS/TUNING/json 等）的前提
+-- 模组入口：初始化、配置读取、Hook 注册与事件转发
+-- 游戏不会给 mod env 安装元表，此行让 modmain 裸名访问 _G 全局
 GLOBAL.setmetatable(env, { __index = function(t, k) return GLOBAL.rawget(GLOBAL, k) end })
 
 Assets = Assets or {}
@@ -10,10 +10,11 @@ table.insert(Assets, Asset("IMAGE", "images/food_types.tex"))
 
 require "ingredienttags"
 require "foodatlas"
+local cooking = require("cooking")
 
 local Config = require("config/config_manager")
 
--- 集中读取全部配置（GetModConfigData 只能在 modmain 直接调用），统一交给 config_manager
+-- 集中读取配置（GetModConfigData 只能在 modmain 调用）交给 config_manager
 Config.Setup({
     language               = GetModConfigData("language"),
     enable_auto_cook       = GetModConfigData("enable_auto_cook"),
@@ -28,7 +29,7 @@ Config.Setup({
     enable_debug_logging   = GetModConfigData("enable_debug_logging"),
 })
 
--- 语言包必须先于任何 UI 模块加载：UI 模块顶层即读取 STRINGS.CSP 常量
+-- 语言包须先于任何 UI 模块加载（UI 模块顶层读取 STRINGS.CSP）
 local _language_map = {
     zh = "cn",  zhr = "cn", zht = "cn",
     ch = "cn",  chs = "cn", sc = "cn", chinese = "cn",
@@ -55,9 +56,7 @@ local Logger = require("debug/logger")
 local g_cookbook_data = CookbookData()
 PanelManager.Setup(g_cookbook_data)
 
--- 环境基准指纹（季节|月相|节日）。部分模组料理的配方需求(recipe_requirements)
--- 只在收集时反推一次，若环境变化不重新收集，图鉴配方可见性会"冻结"在进游戏那一刻。
--- 故监听季节/月相变化，变化时重新收集并实时刷新所有面板。
+-- 环境变化（季节/月相/节日）时重新收集料理数据并刷新面板
 local _last_env_fingerprint = nil
 
 local function RefreshOnEnvironmentChange()
@@ -68,30 +67,37 @@ local function RefreshOnEnvironmentChange()
         print("[智能锅] 环境变化(" .. fp .. ")，重新收集料理数据")
     end
     g_cookbook_data:Collect()
-    -- 强制刷新已打开的面板：图鉴配方可见性 + 可做检测按新环境实时更新（无需重新开关锅）
     PanelManager.ForceRefreshPanels()
+end
+
+-- 调试：输出初始化收集到的料理/食材总数（仅调试开关开启时）
+local function DumpInitStats()
+    if not Logger.IsEnabled() then return end
+    local db = g_cookbook_data
+    local ing_count = 0
+    for _ in pairs(cooking.ingredients or {}) do ing_count = ing_count + 1 end
+    print("[智能锅] 初始化完成: 料理共" .. #db.all .. "种, 食材材料共" .. ing_count .. "种")
 end
 
 AddSimPostInit(function()
     g_cookbook_data:Collect()
     _last_env_fingerprint = Logger.GetEnvironmentFingerprint()
+    DumpInitStats()
 
     local TheWorld = _G.TheWorld
     if TheWorld then
-        -- 进入游戏后只有季节和月相会变化（节日固定），故只监听这两者。
-        -- seasontick 每天推送，指纹去重后仅在真正换季时生效；月相同理。
         TheWorld:ListenForEvent("seasontick", RefreshOnEnvironmentChange)
         TheWorld:ListenForEvent("moonphasechanged2", RefreshOnEnvironmentChange)
     end
 end)
 
--- 控制台命令：清空自动做饭配方记忆
+-- 控制台命令
 _G.ClearAutoCookMemory = function()
     PanelManager.ClearAllAutoCookMemory()
     print(STRINGS.CSP.MEMORY_CLEARED)
 end
 
--- 控制台命令：设置弹窗「可做配方」最大渲染组合数
+-- 控制台命令：设置「可做配方」最大渲染组合数
 _G.SetMaxRenderCombos = function(n)
     Config.SetMaxRenderCombos(n)
     print(STRINGS.CSP.COMBO_LIMIT_SET .. tostring(Config.GetMaxRenderCombos()))
@@ -112,7 +118,6 @@ AddClassPostConstruct("cameras/followcamera", function(self)
 end)
 
 -- 容器开关 Hook：烹饪设备开面板，其余容器绑定变化通知
--- 设备类型判定统一走 ContainerDetector.Match（配置表驱动，新增设备类型无需改这里）
 AddClassPostConstruct("screens/playerhud", function(self)
     local _OpenContainer = self.OpenContainer
     self.OpenContainer = function(self, container, side)

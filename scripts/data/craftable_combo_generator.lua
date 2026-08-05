@@ -9,7 +9,7 @@ local BuildNamesTags = Matcher.BuildNamesTags
 local CheckRecipeByCounts = ComboMatcher.CheckRecipeByCounts
 
 local CACHE_MAX = Config.GetCacheMax()
-local NEGATIVE = false  -- 负缓存哨兵：不可制作也缓存，避免每次刷新重跑回溯
+local NEGATIVE = false  -- 负缓存哨兵：不可制作也缓存
 local _combo_cache = {}
 local _cache_keys = {}
 
@@ -32,7 +32,7 @@ local function CacheSet(key, value)
     _combo_cache[key] = value or NEGATIVE
 end
 
--- 数量匹配模式：从计数表构造 names/tags 供 recipe.test 使用
+-- 从计数表构造 names/tags 供 recipe.test 使用
 local function BuildNamesTagsFromCounts(counts, ingredients, ingredient_aliases)
     local names = {}
     local tags = {}
@@ -51,7 +51,7 @@ local function BuildNamesTagsFromCounts(counts, ingredients, ingredient_aliases)
     return names, tags
 end
 
--- 数量匹配模式：验证指定计数表是否确实产出目标料理（含优先级判定）
+-- 验证计数表是否产出目标料理（含优先级判定）
 local function TestRecipeByCounts(cooker, recipe_item, sorted_defs, names, tags)
     if recipe_item.recipe_def == nil or recipe_item.recipe_def.test == nil then
         Logger.Logf("[智能锅] TestRecipeByCounts: recipe=%s 无 recipe_def.test", recipe_item.prefab)
@@ -59,7 +59,6 @@ local function TestRecipeByCounts(cooker, recipe_item, sorted_defs, names, tags)
     end
     local recipe_prefab = recipe_item.prefab
 
-    -- 同时用分析时相同的空 cooker 调用，看看是否是 cooker 参数导致结果不同
     local st_empty, ret_empty = pcall(recipe_item.recipe_def.test, '', names, tags)
     local st_real, ret_real = pcall(recipe_item.recipe_def.test, cooker, names, tags)
     Logger.Logf("[智能锅] TestRecipeByCounts: recipe=%s cooker=%q names=%s tags=%s",
@@ -68,7 +67,7 @@ local function TestRecipeByCounts(cooker, recipe_item, sorted_defs, names, tags)
         tostring(st_empty and ret_empty), tostring(st_real and ret_real))
 
     if sorted_defs then
-        -- sorted_defs 已按优先级降序排列：第一个匹配的料理才是实际产物
+        -- 第一个匹配的料理才是实际产物
         for _, entry in ipairs(sorted_defs) do
             if entry.def ~= nil and entry.def.test ~= nil then
                 local ok, r = pcall(entry.def.test, cooker, names, tags)
@@ -86,7 +85,6 @@ local function TestRecipeByCounts(cooker, recipe_item, sorted_defs, names, tags)
                 end
             end
         end
-        -- 没有任何料理匹配，说明当前 test 虽然返回 true 但已被优先级挤出
         Logger.Logf("[智能锅] TestRecipeByCounts: recipe=%s 在 sorted_defs 中无任何匹配", recipe_prefab)
         return false
     else
@@ -99,7 +97,7 @@ local function TestRecipeByCounts(cooker, recipe_item, sorted_defs, names, tags)
     end
 end
 
--- 把计数表序列化成可读的 k=v 字符串，仅用于调试输出
+-- 计数表序列化，仅用于调试输出
 local function DumpCounts(counts)
     if not Logger.IsEnabled() then return "" end
     local items = {}
@@ -110,7 +108,7 @@ local function DumpCounts(counts)
     return "[" .. table.concat(items, ",") .. "]"
 end
 
--- 把组合表（数组元素为 {prefab=, count=}）序列化，仅用于调试输出
+-- 组合表序列化，仅用于调试输出
 local function DumpCombo(combo)
     if not Logger.IsEnabled() then return "" end
     if not combo then return "nil" end
@@ -121,7 +119,7 @@ local function DumpCombo(combo)
     return "[" .. table.concat(items, ",") .. "]"
 end
 
--- 把 recipe_requirements 序列化成可读字符串，仅用于调试输出
+-- recipe_requirements 序列化，仅用于调试输出
 local function DumpRequirements(reqs)
     if not Logger.IsEnabled() then return "" end
     if not reqs then return "nil" end
@@ -153,7 +151,7 @@ local function DumpRequirements(reqs)
     return table.concat(parts, " ")
 end
 
--- 数量匹配模式：为一个料理构造一组带数量的食材（可堆叠/高数量需求设备用）
+-- 为一个料理构造一组带数量的食材（可堆叠/高数量需求设备用）
 local function BuildQuantityCombo(recipe_item, bag_counts, pot_counts, cooker, max_slots, ingredients, ingredient_aliases, sorted_defs)
     local recipe_name = recipe_item.prefab
     local reqs = recipe_item.recipe_requirements
@@ -182,7 +180,7 @@ local function BuildQuantityCombo(recipe_item, bag_counts, pot_counts, cooker, m
     end
     Logger.Logf("[智能锅]   加入锅中食材后 chosen=%s", DumpCounts(chosen))
 
-    -- 1. 满足强制名食材
+    -- 1. 强制名食材
     if reqs.minnames then
         for name, min_count in pairs(reqs.minnames) do
             local need = min_count - chosen_count(name)
@@ -198,7 +196,7 @@ local function BuildQuantityCombo(recipe_item, bag_counts, pot_counts, cooker, m
         Logger.Logf("[智能锅]   满足 minnames 后 chosen=%s", DumpCounts(chosen))
     end
 
-    -- 2. 满足可替代组（同类食材可互相替代）
+    -- 2. 可替代组（同类食材可互相替代）
     if reqs.analog_groups then
         for _, group in ipairs(reqs.analog_groups) do
             local have = 0
@@ -224,7 +222,7 @@ local function BuildQuantityCombo(recipe_item, bag_counts, pot_counts, cooker, m
         Logger.Logf("[智能锅]   满足 analog_groups 后 chosen=%s", DumpCounts(chosen))
     end
 
-    -- 3. 满足标签需求
+    -- 3. 标签需求
     if reqs.mintags then
         for tag, min_val in pairs(reqs.mintags) do
             local have = 0
@@ -269,13 +267,13 @@ local function BuildQuantityCombo(recipe_item, bag_counts, pot_counts, cooker, m
     local names, tags = BuildNamesTagsFromCounts(chosen, ingredients, ingredient_aliases)
     Logger.Logf("[智能锅]   test 前 names=%s tags=%s", DumpCounts(names), DumpCounts(tags))
     if recipe_item.recipe_def ~= nil and recipe_item.recipe_def.test ~= nil then
-        -- 有原始 test 函数（原版/HOF）：用游戏原始 test 验证，并做优先级判定
+        -- 用游戏原始 test 验证，并做优先级判定
         if not TestRecipeByCounts(cooker, recipe_item, sorted_defs, names, tags) then
             Logger.Logf("[智能锅] BuildQuantityCombo 失败: recipe=%s 未通过 recipe_def.test 或优先级判定", recipe_name)
             return nil
         end
     else
-        -- 无原始 test 函数（如登仙炼丹炉 recipe_def 传的是空表）：用推导出的 requirements 校验
+        -- 无原始 test 函数：用推导出的 requirements 校验
         if not CheckRecipeByCounts(recipe_item, names, tags, nil, ingredients) then
             Logger.Logf("[智能锅] BuildQuantityCombo 失败: recipe=%s 未通过 recipe_requirements 校验", recipe_name)
             return nil
@@ -318,7 +316,7 @@ function ComboGen.GetRecipeCraftableCombos(db, recipe_item, bag_counts, pot_coun
         return nil
     end
 
-    -- 用 (料理 + bag + pot + raw_bag + 数量匹配标志) 做缓存 key，输入不变时直接返回
+    -- 用 (料理 + bag + pot + raw_bag + 数量匹配标志) 做缓存 key
     local cache_key = recipe_item.prefab .. "|q" .. (use_quantity_matching and "1" or "0") .. "|"
     local keys = {}
     for k, v in pairs(bag_counts) do keys[#keys + 1] = "b" .. k .. "=" .. v end
@@ -326,7 +324,6 @@ function ComboGen.GetRecipeCraftableCombos(db, recipe_item, bag_counts, pot_coun
     for k, v in pairs(raw_bag_counts or {}) do keys[#keys + 1] = "r" .. k .. "=" .. v end
     table.sort(keys)
     cache_key = cache_key .. table.concat(keys, ";")
-    -- 环境指纹：季节/月相/节日会影响部分模组料理的可做性，纳入 key 使环境变化时缓存自动失效
     cache_key = cache_key .. "|E:" .. Logger.GetEnvironmentFingerprint()
     if _combo_cache[cache_key] ~= nil then
         return CacheGet(cache_key)
@@ -335,12 +332,10 @@ function ComboGen.GetRecipeCraftableCombos(db, recipe_item, bag_counts, pot_coun
     local reqs = recipe_item.recipe_requirements
     if not reqs then return nil end
 
-    -- 设备对应的食材表：酿酒（HOF）配方的 tag 体系与烹饪锅不同，必须用 brewingredients，
-    -- 否则回溯匹配对 brewer 算出的 tag 是错的（旧实现硬编码 cooking.ingredients，是个 bug）
+    -- 酿酒设备用 brewingredients（tag 体系与烹饪锅不同）
     local ingredients = (recipe_item.is_brewer and db._brewer_ingredients) or cooking.ingredients
 
-    -- 数量匹配模式：可堆叠设备（如炼丹炉）单个格子可放多份同种食材，
-    -- 用贪心 + test 验证生成一组带数量的食材，而不是把每个食材当成独立 slot。
+    -- 数量匹配：可堆叠设备单个格子可放多份同种食材，贪心 + test 生成带数量组合
     if use_quantity_matching then
         Logger.Logf("[智能锅] GetRecipeCraftableCombos 进入数量匹配分支: recipe=%s", recipe_item.prefab)
         raw_bag_counts = raw_bag_counts or bag_counts
@@ -378,7 +373,6 @@ function ComboGen.GetRecipeCraftableCombos(db, recipe_item, bag_counts, pot_coun
     -- 测试一组完整食材是否被游戏实际匹配为当前料理
     local function _testCombo(slot_list)
         local names, tags = BuildNamesTags(slot_list, ingredients)
-        -- 首先当前料理必须符合
         if recipe_item.recipe_def.test ~= nil then
             local ok, ret = pcall(recipe_item.recipe_def.test, cooker, names, tags)
             if not (ok and ret) then return false end
@@ -414,8 +408,7 @@ function ComboGen.GetRecipeCraftableCombos(db, recipe_item, bag_counts, pot_coun
             end
         end
 
-        -- 按优先级验证：第一个匹配的料理才是游戏实际会产出的
-        -- 同优先级料理之间不互相抢占，用户仍可查看任意一个的组合
+        -- 按优先级验证：第一个匹配的料理才是实际产出；同优先级不互相抢占
         if sorted_defs then
             for _, entry in ipairs(sorted_defs) do
                 if entry.def.test ~= nil then
