@@ -32,6 +32,19 @@ local function CacheSet(key, value)
     _combo_cache[key] = value or NEGATIVE
 end
 
+-- 构建组合缓存 key（料理 + bag + pot + raw_bag + 数量匹配标志 + 环境指纹）
+local function BuildComboCacheKey(recipe_item, bag_counts, pot_counts, raw_bag_counts, use_quantity_matching)
+    local cache_key = recipe_item.prefab .. "|q" .. (use_quantity_matching and "1" or "0") .. "|"
+    local keys = {}
+    for k, v in pairs(bag_counts) do keys[#keys + 1] = "b" .. k .. "=" .. v end
+    for k, v in pairs(pot_counts or {}) do keys[#keys + 1] = "p" .. k .. "=" .. v end
+    for k, v in pairs(raw_bag_counts or {}) do keys[#keys + 1] = "r" .. k .. "=" .. v end
+    table.sort(keys)
+    cache_key = cache_key .. table.concat(keys, ";")
+    cache_key = cache_key .. "|E:" .. Logger.GetEnvironmentFingerprint()
+    return cache_key
+end
+
 -- 从计数表构造 names/tags 供 recipe.test 使用
 local function BuildNamesTagsFromCounts(counts, ingredients, ingredient_aliases)
     local names = {}
@@ -311,20 +324,25 @@ function ComboGen.ClearCache()
     _cache_keys = {}
 end
 
-function ComboGen.GetRecipeCraftableCombos(db, recipe_item, bag_counts, pot_counts, cooker, max_slots, use_quantity_matching, raw_bag_counts, sorted_defs)
+-- 只查组合缓存（不计算），供调用方在启动分片任务前判断是否已命中
+function ComboGen.GetCachedCombos(recipe_item, bag_counts, pot_counts, raw_bag_counts, use_quantity_matching)
+    if not recipe_item or not bag_counts then
+        return nil
+    end
+    local cache_key = BuildComboCacheKey(recipe_item, bag_counts, pot_counts, raw_bag_counts, use_quantity_matching)
+    if _combo_cache[cache_key] ~= nil then
+        return CacheGet(cache_key)
+    end
+    return nil
+end
+
+function ComboGen.GetRecipeCraftableCombos(db, recipe_item, bag_counts, pot_counts, cooker, max_slots, use_quantity_matching, raw_bag_counts, sorted_defs, yield_fn)
     if not recipe_item or not bag_counts or next(bag_counts) == nil then
         return nil
     end
 
-    -- 用 (料理 + bag + pot + raw_bag + 数量匹配标志) 做缓存 key
-    local cache_key = recipe_item.prefab .. "|q" .. (use_quantity_matching and "1" or "0") .. "|"
-    local keys = {}
-    for k, v in pairs(bag_counts) do keys[#keys + 1] = "b" .. k .. "=" .. v end
-    for k, v in pairs(pot_counts or {}) do keys[#keys + 1] = "p" .. k .. "=" .. v end
-    for k, v in pairs(raw_bag_counts or {}) do keys[#keys + 1] = "r" .. k .. "=" .. v end
-    table.sort(keys)
-    cache_key = cache_key .. table.concat(keys, ";")
-    cache_key = cache_key .. "|E:" .. Logger.GetEnvironmentFingerprint()
+    -- 用 (料理 + bag + pot + raw_bag + 数量匹配标志 + 环境指纹) 做缓存 key
+    local cache_key = BuildComboCacheKey(recipe_item, bag_counts, pot_counts, raw_bag_counts, use_quantity_matching)
     if _combo_cache[cache_key] ~= nil then
         return CacheGet(cache_key)
     end
@@ -467,7 +485,7 @@ function ComboGen.GetRecipeCraftableCombos(db, recipe_item, bag_counts, pot_coun
     local bag_copy = {}
     for k, v in pairs(bag_counts) do bag_copy[k] = v end
 
-    -- 回溯搜索：填充剩余槽位
+    -- 回溯搜索：填充剩余槽位（yield_fn 可选，分片模式每个完整组合后挂起）
     local function _search(filled, start_idx, rem)
         if rem == 0 then
             local key_parts = {}
@@ -492,6 +510,9 @@ function ComboGen.GetRecipeCraftableCombos(db, recipe_item, bag_counts, pot_coun
                 for _, v in ipairs(filled) do table.insert(ingr_copy, v) end
                 table.insert(result, { ingredients = ingr_copy, portions = portions })
             end
+            if yield_fn ~= nil then
+                yield_fn(#result)
+            end
             return
         end
 
@@ -513,6 +534,92 @@ function ComboGen.GetRecipeCraftableCombos(db, recipe_item, bag_counts, pot_coun
 
     CacheSet(cache_key, #result > 0 and result or nil)
     return CacheGet(cache_key)
+end
+
+-- ============ 组合分片任务：食材多时回溯组合数爆炸，用协程分片避免选中料理时卡住 ============
+-- 与同步 GetRecipeCraftableCombos 算法一致（只是把 _search 的回溯拆成时间片），
+-- 算完后缓存完整结果（下次命中秒出），调用方再按 max_render 截断渲染。
+local COMBO_YIELD_EVERY = 64
+
+local ComboTask = Class(function(self)
+    self._co = nil
+    self._done = false
+    self._result = nil
+    self._partial_count = nil  -- 渐进：每次 yield 时已累积的组合数
+    self._canceled = false
+    self._slice_deadline = 0
+end)
+
+function ComboTask:Init(db, recipe_item, bag_counts, pot_counts, cooker, max_slots, use_quantity_matching, raw_bag_counts, sorted_defs)
+    local self_ = self
+    local function make_yield_fn()
+        local count = 0
+        return function(current_count)
+            count = count + 1
+            if count >= COMBO_YIELD_EVERY then
+                count = 0
+                if os.clock() * 1000 >= self_._slice_deadline then
+                    coroutine.yield(current_count)
+                end
+            end
+        end
+    end
+    self._co = coroutine.create(function()
+        self._result = ComboGen.GetRecipeCraftableCombos(db, recipe_item, bag_counts, pot_counts, cooker, max_slots, use_quantity_matching, raw_bag_counts, sorted_defs, make_yield_fn())
+    end)
+    return self
+end
+
+function ComboTask:Step(budget_ms)
+    if self._done or self._canceled then
+        return true
+    end
+    self._slice_deadline = os.clock() * 1000 + (budget_ms or 10)
+    local ok, partial_count = coroutine.resume(self._co)
+    if not ok then
+        self._done = true
+        self._result = nil
+        Logger.Logf("[智能锅] 组合分片协程出错: %s", tostring(partial_count))
+        return true
+    end
+    if partial_count ~= nil then
+        self._partial_count = partial_count
+    end
+    if coroutine.status(self._co) == "dead" then
+        self._done = true
+        self._partial_count = self._result and #self._result or 0
+    end
+    return self._done
+end
+
+function ComboTask:GetPartialCount()
+    if self._canceled then
+        return nil
+    end
+    return self._partial_count
+end
+
+function ComboTask:IsDone()
+    return self._done or self._canceled
+end
+
+function ComboTask:GetResult()
+    if self._done and self._result ~= nil then
+        return self._result
+    end
+    return nil
+end
+
+function ComboTask:Cancel()
+    self._canceled = true
+    self._co = nil
+    self._result = nil
+end
+
+function ComboGen.CreateComboTask(db, recipe_item, bag_counts, pot_counts, cooker, max_slots, use_quantity_matching, raw_bag_counts, sorted_defs)
+    local t = ComboTask()
+    t:Init(db, recipe_item, bag_counts, pot_counts, cooker, max_slots, use_quantity_matching, raw_bag_counts, sorted_defs)
+    return t
 end
 
 return ComboGen

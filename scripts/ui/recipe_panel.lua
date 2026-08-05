@@ -90,6 +90,11 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
     self._preserve_scroll = false  -- 渐进显示期间保持滚动位置
     self._last_backpack_partial = nil  -- 上次显示的渐进结果快照（避免无变化刷屏）
     self._match_task_cache_info = nil  -- 缓存写入信息 {bag_counts, fixed_counts, pot_counts}
+    self._combo_task = nil          -- 组合分片任务
+    self._combo_step_scheduled = false  -- 组合分片每帧驱动是否已调度
+    self._combo_task_recipe = nil   -- 组合分片对应的料理 prefab
+    self._combo_status = nil        -- 组合计算状态：calculating/queued/nil
+    self._last_combo_count = nil    -- 上一次显示的渐进组合数（避免无变化刷屏）
 
 	if self._enable_auto_cook then
         self._auto_cook = GetAutoCook()(self, range_init, self._auto_cook_source)
@@ -1025,6 +1030,7 @@ function RecipePanel:StopMonitor()
         self._on_player_unequip = nil
     end
     self:_CancelBackpackMatchTask()
+    self:_CancelComboTask()
     self._match_pending = false
     if self._inv_debounce_task then
         self._inv_debounce_task:Cancel()
@@ -1066,8 +1072,126 @@ function RecipePanel:OnSlotChanged()
     self:SetPotIngredients(prefabs, self._container)
 end
 
+-- 判断组合回溯规模是否巨大、值得分片（不可堆叠 + 候选食材种类超过阈值）
+function RecipePanel:_ShouldUseComboTask()
+    local bag_counts = self._cached_bag_counts
+    if not bag_counts then return false end
+    local num_types = 0
+    for _ in pairs(bag_counts) do
+        num_types = num_types + 1
+    end
+    return num_types >= 10
+end
+
+-- 启动组合分片任务
+function RecipePanel:_StartComboTask(recipe_item)
+    self:_CancelComboTask()
+    local task = self.data:CreateComboTask(
+        recipe_item,
+        self._cached_bag_counts,
+        self._cached_pot_counts,
+        self._cooker,
+        self._max_slots,
+        self._use_quantity_matching,
+        self._cached_bag_counts_raw,
+        self._cached_sorted_defs
+    )
+    self._combo_task = task
+    self._combo_task_recipe = recipe_item.prefab
+    self._combo_status = "calculating"
+    self._last_combo_count = nil
+    self:_SyncComboStatusToPopup()
+    self:_ScheduleComboStep()
+end
+
+-- 每帧推进组合分片任务，完成后刷新弹窗
+function RecipePanel:_ScheduleComboStep()
+    if not self._combo_task then return end
+    if self._combo_step_scheduled then return end
+    self._combo_step_scheduled = true
+    self.inst:DoTaskInTime(0, function()
+        self._combo_step_scheduled = false
+        if not self._combo_task then return end
+        local done = self._combo_task:Step(12)
+        if not done then
+            -- 渐进：仅当弹窗仍显示正在计算的料理(A)时才更新其进度数字，
+            -- 避免 A 的进度被显示到 B 的标题下（B 排队中不更新数字）
+            local pc = self._combo_task:GetPartialCount()
+            local popup = self._recipe_popup
+            local cur = popup and popup._current_recipe_data
+            if pc ~= nil and pc ~= self._last_combo_count
+                and cur ~= nil and cur.prefab == self._combo_task_recipe then
+                self._last_combo_count = pc
+                popup:_UpdateCraftCountLabel(pc)
+            end
+            self:_ScheduleComboStep()
+        else
+            local recipe = self._combo_task_recipe
+            self._combo_task = nil
+            self._combo_task_recipe = nil
+            self._combo_status = nil
+            self:_SyncComboStatusToPopup()
+            self:_RefreshComboPopup(recipe)
+        end
+    end)
+end
+
+function RecipePanel:_CancelComboTask()
+    if self._combo_task then
+        self._combo_task:Cancel()
+        self._combo_task = nil
+    end
+    self._combo_step_scheduled = false
+    self._combo_task_recipe = nil
+    self._combo_status = nil
+    self:_SyncComboStatusToPopup()
+end
+
+-- 组合算完后刷新弹窗（此时缓存已写好，同步返回完整结果并按 max_render 截断渲染）。
+-- 仅当弹窗仍显示刚算完的料理时才刷新，避免算完 A 却误刷新 B。
+function RecipePanel:_RefreshComboPopup(recipe_prefab)
+    local popup = self._recipe_popup
+    if popup and popup:IsVisible() and popup._showing_craft then
+        if recipe_prefab == nil or (popup._current_recipe_data and popup._current_recipe_data.prefab == recipe_prefab) then
+            popup:_UpdateCraftView()
+        end
+    end
+end
+
+-- 把组合计算状态同步到弹窗（CraftSection.Update 通过 popup._combo_status 读取显示提示）
+function RecipePanel:_SyncComboStatusToPopup()
+    if self._recipe_popup then
+        self._recipe_popup._combo_status = self._combo_status
+    end
+end
+
 function RecipePanel:GetCraftableCombinations(recipe_item)
     if not recipe_item then return nil end
+
+    -- 组合分片计算中：返回 nil，等算完后刷新弹窗。
+    -- 记录状态：当前料理在算=calculating，其他料理在算导致排队=queued
+    if self._combo_task then
+        if self._combo_task_recipe == recipe_item.prefab then
+            self._combo_status = "calculating"
+        else
+            self._combo_status = "queued"
+        end
+        self:_SyncComboStatusToPopup()
+        return nil
+    end
+    self._combo_status = nil
+    self:_SyncComboStatusToPopup()
+
+    -- 组合量巨大（不可堆叠 + 食材种类多）且未在计算时：先查缓存，命中直接返回，未命中启动分片任务
+    if not self._use_quantity_matching and self:_ShouldUseComboTask() then
+        local cached = self.data:GetCachedCombos(recipe_item, self._cached_bag_counts, self._cached_pot_counts, self._cached_bag_counts_raw, self._use_quantity_matching)
+        if cached ~= nil then
+            return cached
+        end
+        self:_StartComboTask(recipe_item)
+        return nil
+    end
+
     Logger.Logf("[智能锅] GetCraftableCombinations: recipe=%s qmatch=%s max_slots=%d",
         recipe_item.prefab, tostring(self._use_quantity_matching), self._max_slots or 4)
     local _t_combo

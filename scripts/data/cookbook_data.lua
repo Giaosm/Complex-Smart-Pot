@@ -78,6 +78,16 @@ function CookbookData:GetRecipeCraftableCombos(recipe_item, bag_counts, pot_coun
     return ComboGen.GetRecipeCraftableCombos(self, recipe_item, bag_counts, pot_counts, cooker, max_slots, use_quantity_matching, raw_bag_counts, sorted_defs)
 end
 
+-- 组合分片任务（食材多时选中料理避免卡住）
+function CookbookData:CreateComboTask(recipe_item, bag_counts, pot_counts, cooker, max_slots, use_quantity_matching, raw_bag_counts, sorted_defs)
+    return ComboGen.CreateComboTask(self, recipe_item, bag_counts, pot_counts, cooker, max_slots, use_quantity_matching, raw_bag_counts, sorted_defs)
+end
+
+-- 组合缓存查询（只查不算）
+function CookbookData:GetCachedCombos(recipe_item, bag_counts, pot_counts, raw_bag_counts, use_quantity_matching)
+    return ComboGen.GetCachedCombos(recipe_item, bag_counts, pot_counts, raw_bag_counts, use_quantity_matching)
+end
+
 -- 方案A：分片匹配任务（透传到底层 ComboMatcher）
 function CookbookData:ShouldUseMatchTask(bag_counts, fixed_counts, max_slots, use_quantity_matching)
     return ComboMatcher.ShouldUseTask(bag_counts, fixed_counts, max_slots, use_quantity_matching)

@@ -37,3 +37,5 @@ STRINGS.CSP.MEMORY_CLEARED      = "复杂智能锅：所有自动烹饪记忆已
 STRINGS.CSP.COMBO_LIMIT_SET     = "复杂智能锅：最大渲染组合数已设为 "
 STRINGS.CSP.POPUP_COOK_BTN      = "烹饪"
 STRINGS.CSP.CALCULATING         = "正在计算可做料理..."
+STRINGS.CSP.COMBO_CALCULATING   = "计算中..."
+STRINGS.CSP.COMBO_QUEUED        = "排队中..."

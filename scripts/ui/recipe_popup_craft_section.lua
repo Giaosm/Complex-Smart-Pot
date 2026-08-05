@@ -18,6 +18,17 @@ function CraftSection.Create(popup, y_offset, view_h)
     section.slot_pool = {}
     section.portions = {}
     section.btns = {}
+    -- 计算/排队状态提示：精确居中显示在可做配方可视区域（视口边框）中心
+    section.hint = section.root:AddChild(Text(UIFONT, 22, ""))
+    section.hint:SetHAlign(ANCHOR_MIDDLE)
+    section.hint:SetVAlign(ANCHOR_MIDDLE)
+    -- 视口边框 scissor: x=-(REQ_VIEW_PAD_X-1), y=-(view_h-REQ_VIEW_PAD)+1, w=REQ_VIEW_W-2, h=view_h-2
+    local layout = ReqSection.LAYOUT
+    local hint_x = -layout.REQ_VIEW_PAD_X + layout.REQ_VIEW_W / 2
+    local hint_y = -view_h / 2 + layout.REQ_VIEW_PAD
+    section.hint:SetPosition(hint_x, hint_y)
+    section.hint:SetColour(1, 1, 0.4, 1)
+    section.hint:Hide()
     return section
 end
 
@@ -45,7 +56,26 @@ function CraftSection.Update(popup, section, recipe_item)
         combos = sliced
     end
     if combo_count == 0 then
+        -- 计算中/排队中显示提示；确实无组合则不显示
+        if combos == nil and section.hint then
+            local status = popup._combo_status
+            if status == "calculating" then
+                section.hint:SetString(STRINGS.CSP.COMBO_CALCULATING)
+                section.hint:Show()
+            elseif status == "queued" then
+                section.hint:SetString(STRINGS.CSP.COMBO_QUEUED)
+                section.hint:Show()
+            else
+                section.hint:Hide()
+            end
+        elseif section.hint then
+            section.hint:Hide()
+        end
         return combo_count
+    end
+
+    if section.hint then
+        section.hint:Hide()
     end
 
     -- 使用与最低需求一致的尺寸：24px icon，26px 间距，36px 行高
