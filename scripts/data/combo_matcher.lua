@@ -299,7 +299,8 @@ local function MatchByQuantity(cooker, all_items, bag_counts, fixed_counts, cook
 end
 
 -- 不可堆叠设备：slot 级回溯，只枚举相关食材类型
-local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts)
+-- yield_fn（可选）：每处理完一个完整组合后调用；用于分片执行（方案A），传入 nil 时行为与原来完全一致
+local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts, yield_fn)
     local total_fixed = 0
     for _, c in pairs(fixed_counts) do
         total_fixed = total_fixed + c
@@ -355,6 +356,9 @@ local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cook
     local sel_prefabs = {}
     local sel_counts = {}
 
+    -- 分片挂起点：每处理完一个完整组合后触发（仅当传入 yield_fn 且当前处于协程内）
+    local _yield_fn = yield_fn
+
     local function try_combine(idx, depth, remaining)
         if depth > 0 and remaining == 0 then
             local flat = {}
@@ -400,6 +404,9 @@ local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cook
                         result[prefab] = true
                     end
                 end
+            end
+            if _yield_fn ~= nil then
+                _yield_fn(result)
             end
             return
         end
@@ -487,6 +494,158 @@ function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_
     return result
 end
 
+-- 分片路径的缓存读写（与同步 Match 共用同一 _match_cache + LRU）
+function ComboMatcher.GetCachedMatch(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+    if not bag_counts or next(bag_counts) == nil then
+        return nil
+    end
+    local cache_key = BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+    local cached = _match_cache[cache_key]
+    if cached then
+        return next(cached) and cached or nil
+    end
+    return nil
+end
+
+function ComboMatcher.CacheMatch(result, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+    if not bag_counts or next(bag_counts) == nil then
+        return
+    end
+    local cache_key = BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+    _match_cache[cache_key] = result or {}
+    for i, k in ipairs(_cache_keys) do
+        if k == cache_key then
+            table.remove(_cache_keys, i)
+            break
+        end
+    end
+    table.insert(_cache_keys, cache_key)
+    if #_cache_keys > CACHE_MAX then
+        local old = table.remove(_cache_keys, 1)
+        _match_cache[old] = nil
+    end
+end
+
 ComboMatcher.CheckRecipeByCounts = CheckRecipeByCounts
+
+-- 分片匹配任务：把回溯拆成时间片执行，避免单次阻塞主线程（算法不变，精度与同步一致）
+-- Step(budget_ms)/IsDone/GetResult/Cancel
+local YIELD_EVERY = 64
+
+local MatchTask = Class(function(self)
+    self._co = nil
+    self._done = false
+    self._result = nil
+    self._partial_result = nil
+    self._canceled = false
+    self._slice_deadline = 0
+end)
+
+function MatchTask:Init(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts, use_quantity_matching)
+    ingredients = ingredients or cooking.ingredients  -- 普通锅未传 brewingredients 时回退
+    ingredient_aliases = ingredient_aliases or {}
+    fixed_counts = fixed_counts or {}
+    pot_counts = pot_counts or {}
+    max_slots = max_slots or 4
+
+    local self_ = self
+    local function make_yield_fn()
+        local count = 0
+        return function(current_result)
+            count = count + 1
+            if count >= YIELD_EVERY then
+                count = 0
+                if os.clock() * 1000 >= self_._slice_deadline then
+                    coroutine.yield(current_result)
+                end
+            end
+        end
+    end
+
+    self._co = coroutine.create(function()
+        local result
+        if use_quantity_matching then
+            result = MatchByQuantity(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts)
+        else
+            result = MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts, make_yield_fn())
+        end
+        self._result = result
+    end)
+    return self
+end
+
+function MatchTask:Step(budget_ms)
+    if self._done or self._canceled then
+        return true
+    end
+    self._slice_deadline = os.clock() * 1000 + (budget_ms or 3)
+    local ok, partial = coroutine.resume(self._co)
+    if not ok then
+        self._done = true
+        self._result = nil
+        self._partial_result = nil
+        Logger.Logf("[智能锅] 分片匹配协程出错: %s", tostring(partial))
+        return true
+    end
+    if partial ~= nil then
+        self._partial_result = partial
+    end
+    if coroutine.status(self._co) == "dead" then
+        self._done = true
+        self._partial_result = self._result
+    end
+    return self._done
+end
+
+function MatchTask:IsDone()
+    return self._done or self._canceled
+end
+
+function MatchTask:GetPartialResult()
+    if self._canceled or self._partial_result == nil then
+        return nil
+    end
+    return next(self._partial_result) and self._partial_result or nil
+end
+
+function MatchTask:GetResult()
+    if self._done and self._result ~= nil then
+        return next(self._result) and self._result or nil
+    end
+    return nil
+end
+
+function MatchTask:Cancel()
+    self._canceled = true
+    self._co = nil
+    self._result = nil
+end
+
+local MATCH_TASK_TYPE_THRESHOLD = 10
+
+function ComboMatcher.ShouldUseTask(bag_counts, fixed_counts, max_slots, use_quantity_matching)
+    if use_quantity_matching then
+        return false  -- 数量匹配走贪心，本就快
+    end
+    local total_fixed = 0
+    for _, c in pairs(fixed_counts or {}) do
+        total_fixed = total_fixed + c
+    end
+    local free_slots = (max_slots or 4) - total_fixed
+    if free_slots <= 0 then
+        return false
+    end
+    local num_types = 0
+    for _ in pairs(bag_counts or {}) do
+        num_types = num_types + 1
+    end
+    return num_types >= MATCH_TASK_TYPE_THRESHOLD
+end
+
+function ComboMatcher.CreateMatchTask(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts, use_quantity_matching)
+    local task = MatchTask()
+    task:Init(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts, use_quantity_matching)
+    return task
+end
 
 return ComboMatcher

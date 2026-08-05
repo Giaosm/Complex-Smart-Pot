@@ -3,6 +3,7 @@
 local Collector = require("data/recipe_data_collector")
 local Matcher = require("data/recipe_matcher")
 local ComboGen = require("data/craftable_combo_generator")
+local ComboMatcher = require("data/combo_matcher")
 local INGREDIENT_ALIASES = require("data/ingredient_aliases")
 
 local CookbookData = Class(function(self)
@@ -75,6 +76,27 @@ end
 
 function CookbookData:GetRecipeCraftableCombos(recipe_item, bag_counts, pot_counts, cooker, max_slots, use_quantity_matching, raw_bag_counts, sorted_defs)
     return ComboGen.GetRecipeCraftableCombos(self, recipe_item, bag_counts, pot_counts, cooker, max_slots, use_quantity_matching, raw_bag_counts, sorted_defs)
+end
+
+-- 方案A：分片匹配任务（透传到底层 ComboMatcher）
+function CookbookData:ShouldUseMatchTask(bag_counts, fixed_counts, max_slots, use_quantity_matching)
+    return ComboMatcher.ShouldUseTask(bag_counts, fixed_counts, max_slots, use_quantity_matching)
+end
+
+-- 分片匹配缓存读写（与同步匹配共用缓存，避免每次开锅/库存变化都重算）
+function CookbookData:GetCachedMatch(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+    return ComboMatcher.GetCachedMatch(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+end
+
+function CookbookData:CacheMatch(result, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+    ComboMatcher.CacheMatch(result, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+end
+
+function CookbookData:CreateMatchTask(cooker, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, pot_counts, use_quantity_matching)
+    return ComboMatcher.CreateMatchTask(
+        cooker, self.all, bag_counts, fixed_counts, cooker_recipes, max_slots,
+        ingredients, self._ingredient_aliases, pot_counts, use_quantity_matching
+    )
 end
 
 return CookbookData

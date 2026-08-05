@@ -144,7 +144,8 @@ end
 
 function RecipePopup:_UpdateCraftView()
     local count = CraftSection.Update(self, self._craft_section, self._current_recipe_data)
-    if count ~= nil then
+    -- 仅可做配方视图下才把标题改为"可做配方"；最低需求视图下不误改标题
+    if count ~= nil and self._showing_craft then
         self.min_label:SetString(STRINGS.CSP.POPUP_CRAFTABLE .. " (" .. count .. ")")
     end
 end

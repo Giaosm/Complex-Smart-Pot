@@ -2,6 +2,7 @@
 local Widget         = require("widgets/widget")
 local ImageButton    = require("widgets/imagebutton")
 local Text           = require("widgets/text")
+local FollowText     = require("widgets/followtext")
 local RecipePopup    = require("ui/recipe_popup")
 local PotPreviewBar  = require("ui/pot_preview_bar")
 local CategoryButtons = require("ui/category_buttons")
@@ -82,6 +83,13 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
     self._cached_bag_counts = nil
     self._cached_bag_counts_raw = nil
     self._cached_sorted_defs = nil
+    self._match_task = nil         -- 分片匹配任务
+    self._match_task_bag_sig = nil -- 库存快照签名（用于取消过期任务）
+    self._match_pending = false    -- 分片完成后待刷新
+    self._match_step_scheduled = false  -- 分片每帧驱动是否已调度
+    self._preserve_scroll = false  -- 渐进显示期间保持滚动位置
+    self._last_backpack_partial = nil  -- 上次显示的渐进结果快照（避免无变化刷屏）
+    self._match_task_cache_info = nil  -- 缓存写入信息 {bag_counts, fixed_counts, pot_counts}
 
 	if self._enable_auto_cook then
         self._auto_cook = GetAutoCook()(self, range_init, self._auto_cook_source)
@@ -99,6 +107,8 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
 
     self.scroll_list = self:AddChild(RecipeList.Create(self))
     self.scroll_list:SetPosition(L.LIST_X, 0)
+
+    self._calc_hint = nil  -- 头顶计算提示（懒创建，见 _CreateCalcHint）
 
     if self._enable_auto_cook and self._auto_cook_mode == "memory" then
         self._pot_bar = self:AddChild(PotPreviewBar(self._show_memory, function(checked)
@@ -349,24 +359,31 @@ function RecipePanel:RefreshDisplay()
                 break
             end
         end
-    elseif not self._active_popup_data then
+    elseif not self._active_popup_data and not self._preserve_scroll then
         self.scroll_list:ScrollToScrollPos(1)
     end
 
     if self._active_popup_data then
         local still_visible
         local current_idx
+        local data_changed = false
         for i, v in ipairs(items) do
             if v.prefab == self._active_popup_data.prefab then
                 still_visible = true
                 current_idx = i
+                -- 数据重建（如环境变化触发 Collect）后，更新为最新数据对象并强制重渲染
+                if v ~= self._active_popup_data then
+                    self._active_popup_data = v
+                    data_changed = true
+                end
                 break
             end
         end
         if still_visible then
-            if not self._recipe_popup:IsVisible() then
+            if not self._recipe_popup:IsVisible() or data_changed then
                 self._recipe_popup:ShowForRecipe(self._active_popup_data, self._S, self._T)
-            else
+            elseif self._recipe_popup._showing_craft then
+                -- 仅可做配方视图下才刷新可做组合；最低需求视图下不调用，避免误改"最低需求"标题
                 self._recipe_popup:_UpdateCraftView()
             end
             local max_row = math.max(1, #items - L.VISIBLE_ROWS + 1)
@@ -376,6 +393,8 @@ function RecipePanel:RefreshDisplay()
             self._recipe_popup:Hide()
         end
     end
+
+    self:_UpdateCalcHint()
 end
 
 function RecipePanel:SetAutoCookEnabled(enabled)
@@ -636,30 +655,226 @@ function RecipePanel:_RefreshBackpackRecipes()
 	self._cached_bag_counts_raw = raw_counts
 
 	if not same then
-	    local _t_match
-	    if Logger.IsEnabled() then _t_match = os.clock() end
-	    self._backpack_recipes = self.data:GetMatchingRecipesFromCounts(self._cooker, bag_counts, fixed_counts, self._cooker_recipes, self._max_slots, self._brewing_ingredients, pot_counts, self._use_quantity_matching)
-	    if Logger.IsEnabled() then
-	        Logger.Logf("[智能锅] 匹配耗时 %.1fms", (os.clock() - _t_match) * 1000)
+	    if self.data:ShouldUseMatchTask(bag_counts, fixed_counts, self._max_slots, self._use_quantity_matching) then
+	        local cached = self.data:GetCachedMatch(bag_counts, fixed_counts, pot_counts, self._cooker_recipes, self._max_slots, self._use_quantity_matching)
+	        if cached then
+	            self._backpack_recipes = {}  -- 拷贝，避免槽位检查污染缓存表
+	            for k, _ in pairs(cached) do
+	                self._backpack_recipes[k] = true
+	            end
+	        else
+	            self:_StartBackpackMatchTask(bag_counts, fixed_counts, pot_counts)
+	            self._match_pending = true
+	        end
+	    else
+	        local _t_match
+	        if Logger.IsEnabled() then _t_match = os.clock() end
+	        self._backpack_recipes = self.data:GetMatchingRecipesFromCounts(self._cooker, bag_counts, fixed_counts, self._cooker_recipes, self._max_slots, self._brewing_ingredients, pot_counts, self._use_quantity_matching)
+	        if Logger.IsEnabled() then
+	            Logger.Logf("[智能锅] 匹配耗时 %.1fms", (os.clock() - _t_match) * 1000)
+	        end
+	        Logger.LogWorldContext()
 	    end
-	    Logger.LogWorldContext()
 	end
 
-        Logger.LogScanResult(self._max_slots, self._use_quantity_matching, self._backpack_check_mode, bag_counts)
-        Logger.LogMatchResult(self._backpack_recipes)
-        -- 可做分类还需检查槽位容量：缺的材料种类数不能超过剩余格子
-        if self._backpack_recipes and self._possible_recipes then
-            for prefab, _ in pairs(self._backpack_recipes) do
-                if not self._possible_recipes[prefab] then
-                    self._backpack_recipes[prefab] = nil
-                end
-            end
-            if next(self._backpack_recipes) == nil then
-                self._backpack_recipes = nil
-            end
+        if not self._match_pending then
+            Logger.LogScanResult(self._max_slots, self._use_quantity_matching, self._backpack_check_mode, bag_counts)
+            Logger.LogMatchResult(self._backpack_recipes)
+            -- 可做分类还需检查槽位容量：缺的材料种类数不能超过剩余格子
+            self:_FilterByPossibleRecipes()
+            self._backpack_dirty = false
         end
     end
+    -- 分片模式保持 dirty 由 OnUpdate 驱动，完成后再置 false
+    if not self._match_pending then
+        self._backpack_dirty = false
+    end
+end
+
+-- ============ 方案A：分片匹配任务驱动 ============
+
+-- 比较两个哈希表是否含完全相同的键集合
+local function SameKeySet(a, b)
+    if a == b then return true end
+    if (a == nil) ~= (b == nil) then return false end
+    for k in pairs(a) do
+        if not b[k] then return false end
+    end
+    for k in pairs(b) do
+        if not a[k] then return false end
+    end
+    return true
+end
+
+-- 懒创建头顶计算提示（StopMonitor 销毁后下次显示时自动重建）
+function RecipePanel:_CreateCalcHint()
+    if self._calc_hint then return end
+    if ThePlayer and ThePlayer.HUD then
+        self._calc_hint = FollowText(UIFONT, 28, STRINGS.CSP.CALCULATING)
+        self._calc_hint:SetHUD(ThePlayer.HUD.inst)
+        self._calc_hint:SetTarget(ThePlayer)
+        self._calc_hint:SetOffset(Vector3(0, -350, 0))
+        self._calc_hint:SetScreenOffset(0, 0)
+        if self._calc_hint.text then
+            self._calc_hint.text:SetHAlign(ANCHOR_MIDDLE)
+        end
+        ThePlayer.HUD:AddChild(self._calc_hint)
+        self._calc_hint:Hide()
+    end
+end
+
+-- 计算中在玩家头顶显示提示，完成/无任务时隐藏
+function RecipePanel:_UpdateCalcHint()
+    if self._match_task then
+        self:_CreateCalcHint()
+        if self._calc_hint then
+            self._calc_hint:Show()
+        end
+    elseif self._calc_hint then
+        self._calc_hint:Hide()
+    end
+end
+
+-- 可做分类的槽位容量检查：就地过滤 self._backpack_recipes，返回是否还有剩余
+function RecipePanel:_FilterByPossibleRecipes()
+    if self._backpack_recipes and self._possible_recipes then
+        for prefab, _ in pairs(self._backpack_recipes) do
+            if not self._possible_recipes[prefab] then
+                self._backpack_recipes[prefab] = nil
+            end
+        end
+        if next(self._backpack_recipes) == nil then
+            self._backpack_recipes = nil
+        end
+    end
+    return self._backpack_recipes ~= nil
+end
+
+function RecipePanel:_StartBackpackMatchTask(bag_counts, fixed_counts, pot_counts)
+    self:_CancelBackpackMatchTask()
+    self._last_backpack_partial = nil
+    pot_counts = pot_counts or self._cached_pot_counts or {}
+    local task = self.data:CreateMatchTask(
+        self._cooker, bag_counts, fixed_counts, self._cooker_recipes,
+        self._max_slots, self._brewing_ingredients, pot_counts,
+        self._use_quantity_matching
+    )
+    self._match_task = task
+    self._match_task_cache_info = { bag_counts, fixed_counts, pot_counts }
+    self._match_pending = true
     self._backpack_dirty = false
+    self:_ScheduleMatchStep()
+end
+
+-- 每帧 DoTaskInTime 驱动一次任务推进，_match_step_scheduled 防同帧叠加
+function RecipePanel:_ScheduleMatchStep()
+    if not self._match_task then return end
+    if self._match_step_scheduled then return end
+    self._match_step_scheduled = true
+    self.inst:DoTaskInTime(0, function()
+        self._match_step_scheduled = false
+        if not self._match_task then return end
+        self:_StepBackpackMatchTask()
+        if self._match_task then
+            self:_ScheduleMatchStep()
+        end
+    end)
+end
+
+function RecipePanel:_CancelBackpackMatchTask()
+    if self._match_task then
+        self._match_task:Cancel()
+        self._match_task = nil
+    end
+    self._match_step_scheduled = false
+    self._match_task_cache_info = nil
+end
+
+-- 单帧推进（循环时间片直到用满帧预算或完成）；渐进显示：把新算出的部分结果应用到列表
+function RecipePanel:_StepBackpackMatchTask()
+    local task = self._match_task
+    if not task then return end
+    if self._backpack_dirty then
+        self:_CancelBackpackMatchTask()  -- 库存已变化，结果作废
+        self._match_pending = false
+        return
+    end
+    local t0 = os.clock() * 1000
+    local frame_budget = 12
+    local partial_updated = false
+    while self._match_task do
+        local done = task:Step(12)
+        local partial = task:GetPartialResult()
+        if partial ~= nil then
+            local new_bp = {}
+            for k, _ in pairs(partial) do
+                new_bp[k] = true
+            end
+            -- 仅当有新增料理时才刷新，避免无变化刷屏；拷贝避免污染协程内部 result
+            if not SameKeySet(self._last_backpack_partial, new_bp) then
+                self._backpack_recipes = new_bp
+                self._last_backpack_partial = {}
+                for k, _ in pairs(new_bp) do
+                    self._last_backpack_partial[k] = true
+                end
+                partial_updated = true
+            end
+        end
+        if done then
+            self:_ApplyBackpackMatchResult(task:GetResult())
+            return
+        end
+        if os.clock() * 1000 - t0 >= frame_budget then
+            break
+        end
+    end
+    if partial_updated and self._match_task then
+        self:_ApplyBackpackPartialDisplay()
+    end
+end
+
+-- 渐进显示刷新：保持滚动位置，不标记完成
+function RecipePanel:_ApplyBackpackPartialDisplay()
+    self:_FilterByPossibleRecipes()
+    self._preserve_scroll = true
+    if self.RefreshDisplay then self:RefreshDisplay() end
+    self._preserve_scroll = false
+end
+
+-- 应用分片匹配结果（后处理 + 写缓存 + 刷新）
+function RecipePanel:_ApplyBackpackMatchResult(result)
+    self._match_task = nil
+    self._match_step_scheduled = false
+    self._last_backpack_partial = nil
+    if self._match_task_cache_info then
+        local info = self._match_task_cache_info
+        self.data:CacheMatch(result, info[1], info[2], info[3], self._cooker_recipes, self._max_slots, self._use_quantity_matching)
+        self._match_task_cache_info = nil
+    end
+    self._backpack_recipes = {}
+    if result ~= nil then
+        for k, _ in pairs(result) do
+            self._backpack_recipes[k] = true
+        end
+    end
+    self._match_pending = false
+
+    Logger.LogScanResult(self._max_slots, self._use_quantity_matching, self._backpack_check_mode, self._cached_bag_counts or {})
+    Logger.LogMatchResult(self._backpack_recipes)
+    -- 可做分类还需检查槽位容量：缺的材料种类数不能超过剩余格子
+    self:_FilterByPossibleRecipes()
+
+    self._backpack_dirty = false
+    if self.RefreshDisplay then self:RefreshDisplay() end
+end
+
+-- 库存变化时取消分片任务（结果作废，下次刷新重启）；任务推进由 DoTaskInTime 驱动
+function RecipePanel:OnUpdate(dt)
+    if self._match_task and self._backpack_dirty then
+        self:_CancelBackpackMatchTask()
+        self._match_step_scheduled = false
+        self._match_pending = false
+    end
 end
 
 function RecipePanel:SetPotIngredients(prefab_list, cooker)
@@ -808,6 +1023,16 @@ function RecipePanel:StopMonitor()
     if self._on_player_unequip then
         self._player_inst:RemoveEventCallback("unequip", self._on_player_unequip)
         self._on_player_unequip = nil
+    end
+    self:_CancelBackpackMatchTask()
+    self._match_pending = false
+    if self._inv_debounce_task then
+        self._inv_debounce_task:Cancel()
+        self._inv_debounce_task = nil
+    end
+    if self._calc_hint then  -- 挂在 HUD 上，需手动清理避免残留
+        self._calc_hint:Kill()
+        self._calc_hint = nil
     end
     self._container = nil
 end
