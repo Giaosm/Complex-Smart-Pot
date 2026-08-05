@@ -324,7 +324,7 @@ function ComboGen.ClearCache()
     _cache_keys = {}
 end
 
--- 只查组合缓存（不计算），供调用方在启动分片任务前判断是否已命中
+-- 只查组合缓存不计算，供分片前判断是否已命中
 function ComboGen.GetCachedCombos(recipe_item, bag_counts, pot_counts, raw_bag_counts, use_quantity_matching)
     if not recipe_item or not bag_counts then
         return nil
@@ -536,16 +536,14 @@ function ComboGen.GetRecipeCraftableCombos(db, recipe_item, bag_counts, pot_coun
     return CacheGet(cache_key)
 end
 
--- ============ 组合分片任务：食材多时回溯组合数爆炸，用协程分片避免选中料理时卡住 ============
--- 与同步 GetRecipeCraftableCombos 算法一致（只是把 _search 的回溯拆成时间片），
--- 算完后缓存完整结果（下次命中秒出），调用方再按 max_render 截断渲染。
+-- 组合分片任务：回溯组合数爆炸时用协程分片避免选中料理卡住（算法与同步一致，算完写缓存）
 local COMBO_YIELD_EVERY = 64
 
 local ComboTask = Class(function(self)
     self._co = nil
     self._done = false
     self._result = nil
-    self._partial_count = nil  -- 渐进：每次 yield 时已累积的组合数
+    self._partial_count = nil  -- yield 时已累积的组合数（渐进数量）
     self._canceled = false
     self._slice_deadline = 0
 end)

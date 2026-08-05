@@ -1147,8 +1147,7 @@ function RecipePanel:_CancelComboTask()
     self:_SyncComboStatusToPopup()
 end
 
--- 组合算完后刷新弹窗（此时缓存已写好，同步返回完整结果并按 max_render 截断渲染）。
--- 仅当弹窗仍显示刚算完的料理时才刷新，避免算完 A 却误刷新 B。
+-- 组合算完后刷新弹窗（仅当弹窗仍显示刚算完的料理，避免算完 A 误刷新 B）
 function RecipePanel:_RefreshComboPopup(recipe_prefab)
     local popup = self._recipe_popup
     if popup and popup:IsVisible() and popup._showing_craft then
@@ -1168,8 +1167,7 @@ end
 function RecipePanel:GetCraftableCombinations(recipe_item)
     if not recipe_item then return nil end
 
-    -- 组合分片计算中：返回 nil，等算完后刷新弹窗。
-    -- 记录状态：当前料理在算=calculating，其他料理在算导致排队=queued
+    -- 组合分片计算中：返回 nil，记录状态（当前在算=calculating，其他在算排队=queued）
     if self._combo_task then
         if self._combo_task_recipe == recipe_item.prefab then
             self._combo_status = "calculating"
