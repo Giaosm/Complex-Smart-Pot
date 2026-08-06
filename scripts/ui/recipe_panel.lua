@@ -1112,6 +1112,13 @@ function RecipePanel:_ScheduleComboStep()
     self.inst:DoTaskInTime(0, function()
         self._combo_step_scheduled = false
         if not self._combo_task then return end
+        -- 优化：已切出可做配方视图（如切换到最低需求视图）时，组合结果不再被展示，
+        -- 提前取消后台分片计算，避免白算浪费性能
+        local popup = self._recipe_popup
+        if popup and popup._showing_craft ~= nil and not popup._showing_craft then
+            self:_CancelComboTask()
+            return
+        end
         local done = self._combo_task:Step(12)
         if not done then
             -- 渐进：仅当弹窗仍显示正在计算的料理(A)时才更新其进度数字，

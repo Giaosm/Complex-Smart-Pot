@@ -143,6 +143,8 @@ function RecipePopup:_ApplyCraftView()
 end
 
 function RecipePopup:_UpdateCraftView()
+    -- 优化：不在可做配方组合视图时，直接跳过组合计算（组合列表本就隐藏，无需计算）
+    if not self._showing_craft then return end
     local count = CraftSection.Update(self, self._craft_section, self._current_recipe_data)
     -- 仅可做配方视图下才把标题改为"可做配方"；最低需求视图下不误改标题
     if count ~= nil and self._showing_craft then
