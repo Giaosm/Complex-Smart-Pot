@@ -25,6 +25,11 @@ function CookbookData:Collect()
     return self
 end
 
+-- 环境变化：只局部刷新受环境影响的料理（重新反推配方），不清缓存、不重建其他料理
+function CookbookData:RefreshEnvironmentLocked()
+    return Collector.RefreshEnvironmentLocked(self)
+end
+
 function CookbookData:GetIngredientAliases()
     return self._ingredient_aliases
 end

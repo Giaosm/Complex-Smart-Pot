@@ -140,6 +140,43 @@ local function _BuildRequirements(db, item, test, ingredients)
     return item
 end
 
+-- 香脆松子模组的季节料理 prefab 名单（受环境影响，配方随季节变化）
+-- 仅当"季节料理随时可做"（TUNING.SEASONAL_FOOD）关闭时才视为受环境限制
+local _CRISPY_NUTS_SEASONAL = {
+    nuts_dumpling = true,          -- 春季
+    nuts_mungbean_soup = true,     -- 夏季
+    nuts_sweetpotato_soup = true,  -- 冬季
+    nuts_mistypine = true,         -- 秋季
+    nuts_osmanthus = true,         -- 秋季（需棱镜mod）
+    nuts_osmanthus2 = true,        -- 秋季（深拷贝）
+}
+
+-- 创意工坊模组 ID：棱镜 / 香脆松子（用于判断对应模组是否启用，未启用则跳过刷新）
+local PRISM_ID = "workshop-1392778117"
+local NUTS_ID  = "workshop-3343873962"
+
+-- 模组启用判断：只判断对应模组是否启用（松判断）
+local function _IsModEnabled(modid)
+    return KnownModIndex ~= nil and KnownModIndex:IsModEnabled(modid)
+end
+
+-- 判断料理是否受环境影响（用于环境变化时局部刷新）
+local function _IsEnvironmentLocked(item)
+    local rd = item.recipe_def
+    -- 棱镜：cook_cant 含"专属"即为环境料理（满月/新月/季节），且棱镜模组已启用
+    if rd and rd.cook_cant and type(rd.cook_cant) == "string" and rd.cook_cant:find("专属") then
+        return _IsModEnabled(PRISM_ID)
+    end
+    -- 香脆松子：季节料理（关闭"随时可做"时才受限），且香脆松子模组已启用
+    if _CRISPY_NUTS_SEASONAL[item.prefab] then
+        if _G.TUNING and _G.TUNING.SEASONAL_FOOD == true then
+            return false
+        end
+        return _IsModEnabled(NUTS_ID)
+    end
+    return false
+end
+
 local Collector = {}
 
 -- 原版 + 官方"mod"分类食谱
@@ -342,6 +379,25 @@ function Collector.CollectAll(db)
     table.sort(db.all, _by_hash)
 
     return db
+end
+
+-- 环境变化：局部刷新受环境影响的料理（重新反推配方），不清缓存、不重建其他料理
+-- 返回刷新了多少个料理
+function Collector.RefreshEnvironmentLocked(db)
+    local refreshed = 0
+    for _, item in ipairs(db.all) do
+        if _IsEnvironmentLocked(item) then
+            local test = item.recipe_def and item.recipe_def.test
+            if test ~= nil then
+                item.recipe_requirements = Analyzer.Analyze(test, db._brewer_ingredients or cooking.ingredients)
+            else
+                item.recipe_requirements = nil
+            end
+            Analyzer.BuildRequirementsIndex(item)
+            refreshed = refreshed + 1
+        end
+    end
+    return refreshed
 end
 
 return Collector

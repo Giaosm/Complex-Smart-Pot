@@ -63,10 +63,11 @@ local function RefreshOnEnvironmentChange()
     local fp = Logger.GetEnvironmentFingerprint()
     if fp == _last_env_fingerprint then return end
     _last_env_fingerprint = fp
+    -- 不清空缓存、不重建其他料理，只重新反推受环境影响的料理配方
+    local n = g_cookbook_data:RefreshEnvironmentLocked()
     if Logger.IsEnabled() then
-        print("[智能锅] 环境变化(" .. fp .. ")，重新收集料理数据")
+        print(string.format("[智能锅] 环境变化(%s)，局部刷新受环境影响料理 %d 个", fp, n))
     end
-    g_cookbook_data:Collect()
     PanelManager.ForceRefreshPanels()
 end
 
