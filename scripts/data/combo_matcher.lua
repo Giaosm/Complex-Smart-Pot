@@ -774,7 +774,8 @@ function ComboMatcher.GetCachedCombosMap(bag_counts, fixed_counts, pot_counts, c
     if not bag_counts or next(bag_counts) == nil then
         return nil
     end
-    local entry = MapCacheGet(BuildMapKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching))
+    local key = BuildMapKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+    local entry = MapCacheGet(key)
     return entry
 end
 

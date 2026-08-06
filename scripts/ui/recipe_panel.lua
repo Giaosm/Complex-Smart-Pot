@@ -76,6 +76,7 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
     self._highlighted_recipes = nil
     self._slot_data = {}
     self._cached_pot_counts = nil
+    self._cached_fixed_counts = nil  -- 锅里按槽计的固定食材数（每格1，不含堆叠）
     self._last_pot_counts = nil
     self._slot_debounce_task = nil
     self._active_popup_data = nil
@@ -613,6 +614,7 @@ function RecipePanel:_RefreshBackpackRecipes()
     for _, prefab in pairs(self._slot_data) do
         fixed_counts[prefab] = (fixed_counts[prefab] or 0) + 1
     end
+    self._cached_fixed_counts = fixed_counts  -- 缓存按槽的固定食材数，供组合映射查询用
 
     -- 库存/容器扫描已统一收口到 inventory_scanner（语义见重构待办第六节行为矩阵）
     if Logger.IsEnabled() then self._t_match_start = os.clock() end
@@ -839,6 +841,9 @@ function RecipePanel:_CancelBackpackMatchTask()
     end
     self._match_step_scheduled = false
     self._match_task_cache_info = nil
+    -- 任务取消：清空"计算中"状态，避免残留
+    self._combo_status = nil
+    self:_SyncComboStatusToPopup()
 end
 
 -- 单帧推进（循环时间片直到用满帧预算或完成）；渐进显示：把新算出的部分结果应用到列表
@@ -897,6 +902,9 @@ function RecipePanel:_ApplyBackpackMatchResult(result, combos_map)
     self._match_task = nil
     self._match_step_scheduled = false
     self._last_backpack_partial = nil
+    -- 枚举完成：清空"计算中"状态，避免做不出来时弹窗一直显示"计算中"
+    self._combo_status = nil
+    self:_SyncComboStatusToPopup()
     if self._match_task_cache_info then
         local info = self._match_task_cache_info
         -- 任务完成时把完整组合映射写入缓存（标记 complete=true），供组合路径复用
@@ -1156,8 +1164,9 @@ function RecipePanel:_RestoreCombosFromMap(recipe_item)
     local pot_counts = self._cached_pot_counts or {}
     local raw_bag_counts = self._cached_bag_counts_raw or bag_counts
 
-    -- 匹配缓存 key 用 fixed_counts（锅里占的槽）；不可堆叠设备 pot_counts 即 fixed_counts
-    local map_entry = self.data:GetCachedCombosMap(bag_counts, pot_counts, pot_counts, self._cooker_recipes, self._max_slots, self._use_quantity_matching)
+    -- 匹配缓存 key 用 fixed_counts（锅里占的槽数，每格算1，不含堆叠）
+    local fixed_counts = self._cached_fixed_counts or pot_counts
+    local map_entry = self.data:GetCachedCombosMap(bag_counts, fixed_counts, pot_counts, self._cooker_recipes, self._max_slots, self._use_quantity_matching)
     if not map_entry or next(map_entry.combos) == nil then
         return nil
     end
@@ -1210,6 +1219,13 @@ end
 function RecipePanel:GetCraftableCombinations(recipe_item)
     if not recipe_item then return nil end
 
+    -- 没有任何材料：不可能做出料理，直接返回 nil，避免误设"计算中"
+    if not self._cached_bag_counts or next(self._cached_bag_counts) == nil then
+        self._combo_status = nil
+        self:_SyncComboStatusToPopup()
+        return nil
+    end
+
     -- 数量匹配设备（炼丹炉等）：保留贪心构造（数量匹配无组合枚举概念，不走统一映射）
     if self._use_quantity_matching then
         local r = self.data:GetRecipeCraftableCombos(
@@ -1226,9 +1242,11 @@ function RecipePanel:GetCraftableCombinations(recipe_item)
     end
 
     -- 不可堆叠设备：从匹配路径的组合映射缓存还原（唯一枚举来源，不为单个料理单独枚举）
-    local map_entry = self.data:GetCachedCombosMap(self._cached_bag_counts, self._cached_pot_counts, self._cached_pot_counts, self._cooker_recipes, self._max_slots, false)
-    if map_entry and map_entry.complete and next(map_entry.combos) then
-        -- 映射完整：直接还原目标料理的组合
+    local fixed_counts = self._cached_fixed_counts or self._cached_pot_counts
+    local map_entry = self.data:GetCachedCombosMap(self._cached_bag_counts, fixed_counts, self._cached_pot_counts, self._cooker_recipes, self._max_slots, false)
+    if map_entry and map_entry.complete then
+        -- 映射完整（无论组合是否为空）：直接判定结果，不再显示"计算中"
+        -- 组合为空 = 当前材料凑不出这道料理，返回 nil（显示"无组合"）
         self._combo_status = nil
         self:_SyncComboStatusToPopup()
         return self:_RestoreCombosFromMap(recipe_item)

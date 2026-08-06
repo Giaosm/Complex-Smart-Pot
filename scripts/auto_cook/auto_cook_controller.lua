@@ -695,7 +695,8 @@ function AutoCook:QuickCook(recipe_name)
         end
     end
 
-    if not Mover.CheckIng(memory, self._auto_cook_source, current_container) then
+    -- 不传 current_container 作排除容器：memory 是完整需求，CheckIng 需把锅里已有食材也算入"已有"
+    if not Mover.CheckIng(memory, self._auto_cook_source) then
         Logger.Log("[智能锅] QuickCook 失败: Mover.CheckIng 食材不足")
         Say(STRINGS.CSP.QUICK_NO_INGREDIENTS)
         return false
@@ -753,7 +754,9 @@ function AutoCook:QuickCookWithIngredients(recipe_name, ingredients)
         end
     end
 
-    if not Mover.CheckIng(flat_ingredients, self._auto_cook_source, current_container) then
+    -- 注意：不传 current_container 作排除容器。flat_ingredients 是完整需求（含锅里已有的），
+    -- CheckIng 需把锅里已有食材也算入"已有"，否则锅里已放满时会被误判材料不足
+    if not Mover.CheckIng(flat_ingredients, self._auto_cook_source) then
         Say(STRINGS.CSP.QUICK_NO_INGREDIENTS)
         return false
     end
@@ -812,7 +815,9 @@ function AutoCook:CookWithIngredients(recipe_name, ingredients, multi_pot)
         end
     end
 
-    if not Mover.CheckIng(flat_ingredients, self._auto_cook_source, current_container) then
+    -- 同 QuickCookWithIngredients：flat_ingredients 是完整需求（含锅里已有的），
+    -- CheckIng 不能排除当前锅，否则锅里已放满时会被误判材料不足
+    if not Mover.CheckIng(flat_ingredients, self._auto_cook_source) then
         Say(STRINGS.CSP.QUICK_NO_INGREDIENTS)
         return false
     end
