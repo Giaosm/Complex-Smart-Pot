@@ -56,14 +56,11 @@ function CraftSection.Update(popup, section, recipe_item)
         combos = sliced
     end
     if combo_count == 0 then
-        -- 计算中/排队中显示提示；确实无组合则不显示
+        -- 计算中显示提示（等待匹配路径枚举完整）；确实无组合则不显示
         if combos == nil and section.hint then
             local status = popup._combo_status
             if status == "calculating" then
                 section.hint:SetString(STRINGS.CSP.COMBO_CALCULATING)
-                section.hint:Show()
-            elseif status == "queued" then
-                section.hint:SetString(STRINGS.CSP.COMBO_QUEUED)
                 section.hint:Show()
             else
                 section.hint:Hide()

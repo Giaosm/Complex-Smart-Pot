@@ -152,14 +152,6 @@ function RecipePopup:_UpdateCraftView()
     end
 end
 
--- 分片计算期间只更新"可做配方(N)"的数量数字（不重渲染组合列表），保持低成本
-function RecipePopup:_UpdateCraftCountLabel(count)
-    if not self._showing_craft then return end
-    if count ~= nil then
-        self.min_label:SetString(STRINGS.CSP.POPUP_CRAFTABLE .. " (" .. count .. ")")
-    end
-end
-
 local function _round1(v) return math.floor((v or 0) * 10 + 0.5) / 10 end
 
 function RecipePopup:ShowForRecipe(data, S, T)
