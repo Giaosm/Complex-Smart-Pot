@@ -44,11 +44,14 @@ local function GetActiveEvents()
     return events
 end
 
--- 环境指纹：季节 + 月相 + 活跃节日，用于匹配缓存 key，使环境变化时缓存失效
+-- 环境指纹：季节 + 是否满月 + 活跃节日，用于匹配缓存 key，使环境变化时缓存失效
+-- 月相只区分"满月/非满月"：仅进入满月或离开满月时触发重收集，非满月阶段间变化不触发
 function Logger.GetEnvironmentFingerprint()
+    local moonphase = GetCurrentMoonPhase()
+    local is_full_moon = moonphase == "full" and "full" or "not_full"
     return table.concat({
         GetCurrentSeason() or "?",
-        GetCurrentMoonPhase() or "?",
+        is_full_moon,
         table.concat(GetActiveEvents(), ","),
     }, "|")
 end

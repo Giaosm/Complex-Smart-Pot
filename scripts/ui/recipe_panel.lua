@@ -76,6 +76,8 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
     self._highlighted_recipes = nil
     self._slot_data = {}
     self._cached_pot_counts = nil
+    self._last_pot_counts = nil
+    self._slot_debounce_task = nil
     self._active_popup_data = nil
     self._backpack_dirty = false
     self._scroll_to_prefab = nil
@@ -639,6 +641,23 @@ function RecipePanel:_RefreshBackpackRecipes()
 	        if v ~= math.min(bag_counts[k] or 0, max_per_type) then same = false; break end
 	    end
 	end
+	-- 锅里材料变化（放入/取出）也必须重算：背包相同但锅状态不同，可做结果可能不同
+	if same then
+	    local last = self._last_pot_counts
+	    local cur = pot_counts
+	    if (last == nil) ~= (next(cur) == nil) then
+	        same = false
+	    else
+	        for k, v in pairs(cur) do
+	            if (last[k] or 0) ~= v then same = false; break end
+	        end
+	        if same then
+	            for k, v in pairs(last) do
+	                if (cur[k] or 0) ~= v then same = false; break end
+	            end
+	        end
+	    end
+	end
 	if same then
 	    self._backpack_dirty = false
 	    if not self._active_popup_data then
@@ -650,6 +669,7 @@ function RecipePanel:_RefreshBackpackRecipes()
 	    for k, v in pairs(bag_counts) do
 	        self._cached_bag_counts[k] = math.min(v, max_per_type)
 	    end
+	    self._last_pot_counts = pot_counts
 	end
 	self._cached_bag_counts_raw = raw_counts
 
@@ -949,14 +969,14 @@ function RecipePanel:StartMonitor(container)
     self._onitemget = function(inst, data)
         if data ~= nil and data.slot ~= nil and data.item ~= nil and data.item.prefab ~= nil then
             self._slot_data[data.slot] = data.item.prefab
-            self:OnSlotChanged()
+            self:_DebouncedSlotChanged()
         end
     end
 
     self._onitemlose = function(inst, data)
         if data ~= nil and data.slot ~= nil then
             self._slot_data[data.slot] = nil
-            self:OnSlotChanged()
+            self:_DebouncedSlotChanged()
         end
     end
 
@@ -989,7 +1009,7 @@ function RecipePanel:StartMonitor(container)
                     self._slot_data[i] = item.prefab
                 end
             end
-            self:OnSlotChanged()
+            self:_DebouncedSlotChanged()
         end
     end
 
@@ -1052,6 +1072,10 @@ function RecipePanel:StopMonitor()
         self._player_inst:RemoveEventCallback("stacksizechange", self._on_player_inventory_change)
         self._on_player_inventory_change = nil
     end
+    if self._slot_debounce_task then
+        self._slot_debounce_task:Cancel()
+        self._slot_debounce_task = nil
+    end
     if self._on_player_equip then
         self._player_inst:RemoveEventCallback("equip", self._on_player_equip)
         self._on_player_equip = nil
@@ -1085,6 +1109,19 @@ end
 
 function RecipePanel:_IsContainerSlot(eslot)
     return eslot == "body" or eslot == "backpack"
+end
+
+-- 锅里槽位变化防抖刷新：跨容器移动（如 shift+左击 从锅移到冰箱）时，
+-- 锅的 itemlose 先触发，若立即刷新扫描，目标容器（冰箱）尚未收到材料，
+-- 会导致 raw_counts 丢失移动中的材料、份数偏低。延迟到移动完成后再统一刷新。
+function RecipePanel:_DebouncedSlotChanged()
+    if self._slot_debounce_task then
+        self._slot_debounce_task:Cancel()
+    end
+    self._slot_debounce_task = self.inst:DoTaskInTime(0.15, function()
+        self._slot_debounce_task = nil
+        self:OnSlotChanged()
+    end)
 end
 
 function RecipePanel:OnSlotChanged()

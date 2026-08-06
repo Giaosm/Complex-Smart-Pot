@@ -97,55 +97,69 @@ local function TestRecipeByCounts(cooker, recipe_item, sorted_defs, names, tags)
 end
 
 -- 为一个料理构造一组带数量的食材（可堆叠/高数量需求设备用）
+-- 返回的组合 = 配方需求的完整清单（不受锅里已放材料影响，恒定），
+-- 锅里已有材料仅用于抵扣背包消耗和验证可做性，绝不混入返回组合。
 local function BuildQuantityCombo(recipe_item, bag_counts, pot_counts, cooker, max_slots, ingredients, ingredient_aliases, sorted_defs)
-    local recipe_name = recipe_item.prefab
     local reqs = recipe_item.recipe_requirements
     if not reqs then
         return nil
     end
 
-    local chosen = {}
-    local function add(name, count)
-        chosen[name] = (chosen[name] or 0) + count
+    -- provided：锅里已投入的材料（只用于抵扣/验证，不进返回组合）
+    local provided = {}
+    for name, count in pairs(pot_counts or {}) do
+        if count > 0 then provided[name] = count end
     end
-    local function chosen_count(name)
-        return chosen[name] or 0
+    local function provided_count(name)
+        return provided[name] or 0
     end
     local function bag_count(name)
         return bag_counts[name] or 0
     end
 
-    -- 锅里已有的也算入已选
-    for name, count in pairs(pot_counts or {}) do
-        add(name, count)
+    -- combo：配方需求的完整组合（恒定展示）；chosen：需从背包补充的部分（用于验证/份数）
+    local combo = {}
+    local chosen = {}
+    local function add_combo(name, count)
+        combo[name] = (combo[name] or 0) + count
+    end
+    local function add_chosen(name, count)
+        chosen[name] = (chosen[name] or 0) + count
+    end
+    -- 某一材料当前已投入总量（锅里 + 背包已补）
+    local function have(name)
+        return provided_count(name) + (chosen[name] or 0)
     end
 
-    -- 1. 强制名食材
+    -- 1. 强制名食材：需求恒定 = min_count；背包补足缺口
     if reqs.minnames then
         for name, min_count in pairs(reqs.minnames) do
-            local need = min_count - chosen_count(name)
+            add_combo(name, min_count)
+            local need = min_count - have(name)
             if need > 0 then
                 if bag_count(name) < need then
                     return nil
                 end
-                add(name, need)
+                add_chosen(name, need)
             end
         end
     end
 
-    -- 2. 可替代组（同类食材可互相替代）
+    -- 2. 可替代组（同类食材可互相替代）：优先用锅里的，不足的用背包选一种补
     if reqs.analog_groups then
         for _, group in ipairs(reqs.analog_groups) do
             local have = 0
             for _, gname in ipairs(group.names) do
-                have = have + chosen_count(gname)
+                have = have + provided_count(gname) + (chosen[gname] or 0)
             end
             if have < group.amount then
                 local need = group.amount - have
+                -- 从背包选组内材料补足（组合展示该组实际采用的材料）
                 for _, gname in ipairs(group.names) do
                     local take = math.min(bag_count(gname), need)
                     if take > 0 then
-                        add(gname, take)
+                        add_chosen(gname, take)
+                        add_combo(gname, take)
                         need = need - take
                         if need <= 0 then break end
                     end
@@ -161,11 +175,11 @@ local function BuildQuantityCombo(recipe_item, bag_counts, pot_counts, cooker, m
     if reqs.mintags then
         for tag, min_val in pairs(reqs.mintags) do
             local have = 0
-            for name, count in pairs(chosen) do
+            for name in pairs(combo) do
                 local ing_name = ingredient_aliases and ingredient_aliases[name] or name
                 local data = ingredients and ingredients[ing_name]
                 if data ~= nil and data.tags ~= nil and data.tags[tag] ~= nil then
-                    have = have + count * data.tags[tag]
+                    have = have + have(name) * data.tags[tag]
                 end
             end
             if have < min_val then
@@ -180,7 +194,8 @@ local function BuildQuantityCombo(recipe_item, bag_counts, pot_counts, cooker, m
                     if data ~= nil and data.tags ~= nil and data.tags[tag] ~= nil then
                         local val = data.tags[tag]
                         local take = math.min(bag_count(name), math.ceil(need / val))
-                        add(name, take)
+                        add_chosen(name, take)
+                        add_combo(name, take)
                         need = need - take * val
                         if need <= 0 then
                             found = true
@@ -195,8 +210,11 @@ local function BuildQuantityCombo(recipe_item, bag_counts, pot_counts, cooker, m
         end
     end
 
-    -- 4. 验证组合是否满足料理要求
-    local names, tags = BuildNamesTagsFromCounts(chosen, ingredients, ingredient_aliases)
+    -- 4. 验证组合是否满足料理要求（用锅里+背包的完整投入验证）
+    local verify = {}
+    for name, count in pairs(provided) do verify[name] = count end
+    for name, count in pairs(chosen) do verify[name] = (verify[name] or 0) + count end
+    local names, tags = BuildNamesTagsFromCounts(verify, ingredients, ingredient_aliases)
     if recipe_item.recipe_def ~= nil and recipe_item.recipe_def.test ~= nil then
         -- 用游戏原始 test 验证，并做优先级判定
         if not TestRecipeByCounts(cooker, recipe_item, sorted_defs, names, tags) then
@@ -209,24 +227,24 @@ local function BuildQuantityCombo(recipe_item, bag_counts, pot_counts, cooker, m
         end
     end
 
-    -- 5. 可堆叠设备：不同食材种类数不能超过槽位数
+    -- 5. 可堆叠设备：不同食材种类数不能超过槽位数（按配方需求组合算）
     local distinct = 0
-    for _, count in pairs(chosen) do
+    for _, count in pairs(combo) do
         if count > 0 then distinct = distinct + 1 end
     end
     if distinct > max_slots then
         return nil
     end
 
-    -- 6. 构造带数量的组合表
-    local combo = {}
-    for name, count in pairs(chosen) do
+    -- 6. 构造带数量的组合表（返回配方需求清单，不含锅里多余材料）
+    local result = {}
+    for name, count in pairs(combo) do
         if count > 0 then
-            table.insert(combo, { prefab = name, count = count })
+            table.insert(result, { prefab = name, count = count })
         end
     end
-    table.sort(combo, function(a, b) return a.prefab < b.prefab end)
-    return combo
+    table.sort(result, function(a, b) return a.prefab < b.prefab end)
+    return result
 end
 
 local ComboGen = {}
