@@ -9,6 +9,85 @@ local CACHE_MAX = Config.GetCacheMax()
 local _match_cache = {}
 local _cache_keys = {}  -- LRU 顺序，最新的在末尾
 
+-- 组合→料理映射缓存：供组合路径复用，避免重复枚举
+-- 值：{ combos = { [组合串] = { [prefab] = priority, ... }, ... }, complete = bool }
+-- complete=false 表示部分结果（面板被打断时写入），命中后需续算补齐
+local _combo_map_cache = {}
+local _map_cache_keys = {}  -- LRU 顺序，最新的在末尾
+
+-- ============ 缓存统计（调试用） ============
+-- 统计组合映射缓存的"组合条目数"，用于输出"组合缓存 / 本次新增 / 命中率"
+local _combo_count = 0
+
+-- 实时统计当前缓存中的组合总数
+local function _UpdateMapComboStats()
+    local total = 0
+    for _, entry in pairs(_combo_map_cache) do
+        for _ in pairs(entry.combos or {}) do
+            total = total + 1
+        end
+    end
+    _combo_count = total
+end
+
+-- 上次输出统计时的组合总数（用于计算"本次新增"）
+local _last_stats_combo_count = 0
+
+local function _MapSummary()
+    -- "新增" = 自上次统计以来新增的组合数（本次增量，非累计）
+    local added_this = _combo_count - _last_stats_combo_count
+    if added_this < 0 then added_this = 0 end
+    -- "命中率" = 按组合算：本次涉及的组合中，命中缓存（无需新算）的占比
+    -- 即 (当前组合总数 - 本次新增) / 当前组合总数
+    local rate = 0
+    if _combo_count > 0 then
+        rate = (_combo_count - added_this) / _combo_count * 100
+    end
+    return string.format("组合缓存:%d 新增:%d 命中:%.1f%%",
+        _combo_count, added_this, rate)
+end
+
+function ComboMatcher.LogCacheStats()
+    if not Logger.IsEnabled() then return end
+    local line = "[智能锅][缓存] 映射:" .. _MapSummary()
+    -- 输出前更新基准，供下次计算"本次新增"
+    _last_stats_combo_count = _combo_count
+    print(line)
+end
+
+local function MapCacheGet(key)
+    return _combo_map_cache[key]
+end
+
+local function MapCacheSet(key, value)
+    if _combo_map_cache[key] == nil then
+        table.insert(_map_cache_keys, key)
+        if #_map_cache_keys > CACHE_MAX then
+            local old = table.remove(_map_cache_keys, 1)
+            _combo_map_cache[old] = nil
+        end
+    end
+    _combo_map_cache[key] = value
+    _UpdateMapComboStats()
+end
+
+-- 从映射聚合出"能做的料理集合"：每个组合取最高优先级料理的并集
+local function CombineCombosToSet(combos)
+    local set = {}
+    for _, matched in pairs(combos) do
+        local max_p = nil
+        for prefab, p in pairs(matched) do
+            if max_p == nil or p > max_p then max_p = p end
+        end
+        if max_p ~= nil then
+            for prefab, p in pairs(matched) do
+                if p == max_p then set[prefab] = true end
+            end
+        end
+    end
+    return next(set) and set or nil
+end
+
 
 local function BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
     local parts = {}
@@ -299,7 +378,8 @@ local function MatchByQuantity(cooker, all_items, bag_counts, fixed_counts, cook
 end
 
 -- 不可堆叠设备：slot 级回溯，只枚举相关食材类型
--- yield_fn（可选）：每处理完一个完整组合后调用；用于分片执行（方案A），传入 nil 时行为与原来完全一致
+-- yield_fn（可选）：每处理完一个完整组合后调用（result, combos_map）；用于分片执行（方案A），传入 nil 时行为与原来完全一致
+-- 返回：result（能做的料理集合）, combos_map（组合串→{prefab=priority}，供组合路径复用）
 local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts, yield_fn)
     local total_fixed = 0
     for _, c in pairs(fixed_counts) do
@@ -353,6 +433,7 @@ local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cook
 
     local n = #types
     local result = {}
+    local combos_map = {}
     local sel_prefabs = {}
     local sel_counts = {}
 
@@ -398,6 +479,11 @@ local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cook
                     end
                 end
             end
+            -- 记录组合→料理映射（含优先级），供组合路径复用/续算
+            local combo_key = table.concat(flat, ",")
+            if next(matched) then
+                combos_map[combo_key] = matched
+            end
             if max_priority ~= nil then
                 for prefab, p in pairs(matched) do
                     if p == max_priority then
@@ -406,7 +492,7 @@ local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cook
                 end
             end
             if _yield_fn ~= nil then
-                _yield_fn(result)
+                _yield_fn(result, combos_map)
             end
             return
         end
@@ -431,7 +517,7 @@ local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cook
 
     try_combine(1, 0, free_slots)
 
-    -- 调试统计：候选/最终料理按原版/模组拆分（仅在调试开关开启时）
+    -- 调试统计：候选料理 / 最终料理（按原版/模组拆分，仅调试开启时输出）
     if Logger.IsEnabled() then
         local cand_vanilla, cand_mod = 0, 0
         local fin_vanilla, fin_mod = 0, 0
@@ -449,10 +535,10 @@ local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cook
                 end
             end
         end
-        Logger.Logf("[智能锅] MatchNonStacked: 候选料理%d(模组%d+原版%d) 最终%d(模组%d+原版%d)",
+        Logger.Logf("[智能锅] 候选料理%d(模组%d+原版%d) 最终料理%d(模组%d+原版%d)",
             #candidate_items, cand_mod, cand_vanilla, fin_mod + fin_vanilla, fin_mod, fin_vanilla)
     end
-    return next(result) and result or nil
+    return next(result) and result or nil, next(combos_map) and combos_map or nil
 end
 
 function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts, use_quantity_matching)
@@ -472,11 +558,11 @@ function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_
         return next(cached) and cached or nil
     end
 
-    local result
+    local result, combos_map
     if use_quantity_matching then
         result = MatchByQuantity(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts)
     else
-        result = MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts)
+        result, combos_map = MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts)
     end
 
     _match_cache[cache_key] = result or {}
@@ -490,6 +576,10 @@ function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_
     if #_cache_keys > CACHE_MAX then
         local old = table.remove(_cache_keys, 1)
         _match_cache[old] = nil
+    end
+    -- 同步写入组合映射缓存（标记完整），供组合路径复用
+    if not use_quantity_matching then
+        MapCacheSet(cache_key, { combos = combos_map or {}, complete = true })
     end
     return result
 end
@@ -507,7 +597,7 @@ function ComboMatcher.GetCachedMatch(bag_counts, fixed_counts, pot_counts, cooke
     return nil
 end
 
-function ComboMatcher.CacheMatch(result, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+function ComboMatcher.CacheMatch(result, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, combos_map, complete)
     if not bag_counts or next(bag_counts) == nil then
         return
     end
@@ -524,6 +614,14 @@ function ComboMatcher.CacheMatch(result, bag_counts, fixed_counts, pot_counts, c
         local old = table.remove(_cache_keys, 1)
         _match_cache[old] = nil
     end
+    -- 同步写入组合映射缓存（任务完成时由调用方传入 combos_map）
+    if combos_map ~= nil then
+        if combos_map ~= false then
+            if next(combos_map) then
+                ComboMatcher.CacheCombosMap(combos_map, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, complete)
+            end
+        end
+    end
 end
 
 ComboMatcher.CheckRecipeByCounts = CheckRecipeByCounts
@@ -536,7 +634,9 @@ local MatchTask = Class(function(self)
     self._co = nil
     self._done = false
     self._result = nil
+    self._combos = nil
     self._partial_result = nil
+    self._partial_combos = nil
     self._canceled = false
     self._slice_deadline = 0
 end)
@@ -551,25 +651,26 @@ function MatchTask:Init(cooker, all_items, bag_counts, fixed_counts, cooker_reci
     local self_ = self
     local function make_yield_fn()
         local count = 0
-        return function(current_result)
+        return function(current_result, current_combos)
             count = count + 1
             if count >= YIELD_EVERY then
                 count = 0
                 if os.clock() * 1000 >= self_._slice_deadline then
-                    coroutine.yield(current_result)
+                    coroutine.yield(current_result, current_combos)
                 end
             end
         end
     end
 
     self._co = coroutine.create(function()
-        local result
+        local result, combos_map
         if use_quantity_matching then
             result = MatchByQuantity(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts)
         else
-            result = MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts, make_yield_fn())
+            result, combos_map = MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts, make_yield_fn())
         end
         self._result = result
+        self._combos = combos_map
     end)
     return self
 end
@@ -579,20 +680,26 @@ function MatchTask:Step(budget_ms)
         return true
     end
     self._slice_deadline = os.clock() * 1000 + (budget_ms or 3)
-    local ok, partial = coroutine.resume(self._co)
+    local ok, partial, partial_combos = coroutine.resume(self._co)
     if not ok then
         self._done = true
         self._result = nil
+        self._combos = nil
         self._partial_result = nil
+        self._partial_combos = nil
         Logger.Logf("[智能锅] 分片匹配协程出错: %s", tostring(partial))
         return true
     end
     if partial ~= nil then
         self._partial_result = partial
     end
+    if partial_combos ~= nil then
+        self._partial_combos = partial_combos
+    end
     if coroutine.status(self._co) == "dead" then
         self._done = true
         self._partial_result = self._result
+        self._partial_combos = self._combos
     end
     return self._done
 end
@@ -608,6 +715,13 @@ function MatchTask:GetPartialResult()
     return next(self._partial_result) and self._partial_result or nil
 end
 
+function MatchTask:GetPartialCombos()
+    if self._canceled or self._partial_combos == nil then
+        return nil
+    end
+    return self._partial_combos
+end
+
 function MatchTask:GetResult()
     if self._done and self._result ~= nil then
         return next(self._result) and self._result or nil
@@ -619,6 +733,7 @@ function MatchTask:Cancel()
     self._canceled = true
     self._co = nil
     self._result = nil
+    self._combos = nil
 end
 
 local MATCH_TASK_TYPE_THRESHOLD = 10
@@ -646,6 +761,43 @@ function ComboMatcher.CreateMatchTask(cooker, all_items, bag_counts, fixed_count
     local task = MatchTask()
     task:Init(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts, use_quantity_matching)
     return task
+end
+
+-- ============ 组合→料理映射缓存（供组合路径复用 / 面板打断续算） ============
+
+local function BuildMapKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+    return BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+end
+
+-- 查询组合映射缓存；返回 { combos = {...}, complete = bool } 或 nil
+function ComboMatcher.GetCachedCombosMap(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+    if not bag_counts or next(bag_counts) == nil then
+        return nil
+    end
+    local entry = MapCacheGet(BuildMapKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching))
+    return entry
+end
+
+-- 写入组合映射缓存；complete 默认 true；仅不可堆叠路径使用（数量匹配无组合枚举）
+function ComboMatcher.CacheCombosMap(combos_map, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, complete)
+    if use_quantity_matching or not bag_counts or next(bag_counts) == nil then
+        return
+    end
+    if combos_map == nil or next(combos_map) == nil then
+        return
+    end
+    local key = BuildMapKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+    local existing = _combo_map_cache[key]
+    if existing and existing.complete then
+        return  -- 已有完整结果，不覆盖
+    end
+    MapCacheSet(key, { combos = combos_map, complete = complete ~= false })
+end
+
+-- 从映射缓存还原"能做的料理集合"（每个组合取最高优先级）
+function ComboMatcher.GetRecipesFromCombosMap(cache_entry)
+    if not cache_entry then return nil end
+    return CombineCombosToSet(cache_entry.combos)
 end
 
 return ComboMatcher

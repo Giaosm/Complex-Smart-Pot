@@ -1,6 +1,58 @@
 -- 调试日志：受 enable_debug_logging 开关控制
 local Config = require("config/config_manager")
 
+local Logger = {}
+
+function Logger.IsEnabled()
+    return Config.IsDebugLogging()
+end
+
+function Logger.Log(...)
+    if not Config.IsDebugLogging() then return end
+    print(...)
+end
+
+function Logger.Logf(fmt, ...)
+    if not Config.IsDebugLogging() then return end
+    print(string.format(fmt, ...))
+end
+
+-- 惰性日志：仅调试开启时执行 fn 求值
+function Logger.LogLazy(fn)
+    if not Config.IsDebugLogging() then return end
+    print(fn())
+end
+
+local function GetCurrentSeason()
+    return _G.TheWorld and _G.TheWorld.state and _G.TheWorld.state.season
+end
+
+local function GetCurrentMoonPhase()
+    return _G.TheWorld and _G.TheWorld.state and _G.TheWorld.state.moonphase
+end
+
+-- 当前活跃节日列表（主事件 + 额外事件，可多种并存）
+local function GetActiveEvents()
+    local events = {}
+    if _G.GetAllActiveEvents then
+        local all = _G.GetAllActiveEvents(_G.WORLD_SPECIAL_EVENT, _G.WORLD_EXTRA_EVENTS)
+        for event, _ in pairs(all or {}) do
+            table.insert(events, event)
+        end
+    end
+    table.sort(events)
+    return events
+end
+
+-- 环境指纹：季节 + 月相 + 活跃节日，用于匹配缓存 key，使环境变化时缓存失效
+function Logger.GetEnvironmentFingerprint()
+    return table.concat({
+        GetCurrentSeason() or "?",
+        GetCurrentMoonPhase() or "?",
+        table.concat(GetActiveEvents(), ","),
+    }, "|")
+end
+
 -- 季节/月相/节日的显示名称映射
 local _SEASON_NAMES = {
     autumn = "秋季",
@@ -35,68 +87,6 @@ local _EVENT_NAMES = {
     year_of_the_knight = "骑士之年",
 }
 
-local Logger = {}
-
-function Logger.IsEnabled()
-    return Config.IsDebugLogging()
-end
-
-function Logger.Log(...)
-    if not Config.IsDebugLogging() then return end
-    print(...)
-end
-
-function Logger.Logf(fmt, ...)
-    if not Config.IsDebugLogging() then return end
-    print(string.format(fmt, ...))
-end
-
--- 惰性日志：仅调试开启时执行 fn 求值
-function Logger.LogLazy(fn)
-    if not Config.IsDebugLogging() then return end
-    print(fn())
-end
-
-function Logger.LogScanResult(max_slots, use_quantity_matching, mode, bag_counts)
-    if not Config.IsDebugLogging() then return end
-    local items = {}
-    for k, v in pairs(bag_counts) do table.insert(items, k .. "=" .. v) end
-    table.sort(items)
-    print(string.format("[智能锅] slots=%d qmatch=%s mode=%s scan(%d)",
-        max_slots, tostring(use_quantity_matching), tostring(mode), #items))
-    print("  [" .. table.concat(items, "、") .. "]")
-end
-
-local function GetCurrentSeason()
-    return _G.TheWorld and _G.TheWorld.state and _G.TheWorld.state.season
-end
-
-local function GetCurrentMoonPhase()
-    return _G.TheWorld and _G.TheWorld.state and _G.TheWorld.state.moonphase
-end
-
--- 当前活跃节日列表（主事件 + 额外事件，可多种并存）
-local function GetActiveEvents()
-    local events = {}
-    if _G.GetAllActiveEvents then
-        local all = _G.GetAllActiveEvents(_G.WORLD_SPECIAL_EVENT, _G.WORLD_EXTRA_EVENTS)
-        for event, _ in pairs(all or {}) do
-            table.insert(events, event)
-        end
-    end
-    table.sort(events)
-    return events
-end
-
--- 环境指纹：季节 + 月相 + 活跃节日，用于匹配缓存 key，使环境变化时缓存失效
-function Logger.GetEnvironmentFingerprint()
-    return table.concat({
-        GetCurrentSeason() or "?",
-        GetCurrentMoonPhase() or "?",
-        table.concat(GetActiveEvents(), ","),
-    }, "|")
-end
-
 -- 输出当日季节、月相、节日活动
 function Logger.LogWorldContext()
     if not Config.IsDebugLogging() then return end
@@ -114,6 +104,18 @@ function Logger.LogWorldContext()
     print("[智能锅] 节日活动 " .. (#names > 0 and table.concat(names, "、") or "无"))
 end
 
+-- 扫描结果：食材计数列表
+function Logger.LogScanResult(max_slots, use_quantity_matching, mode, bag_counts)
+    if not Config.IsDebugLogging() then return end
+    local items = {}
+    for k, v in pairs(bag_counts) do table.insert(items, k .. "=" .. v) end
+    table.sort(items)
+    print(string.format("[智能锅] slots=%d qmatch=%s mode=%s scan(%d)",
+        max_slots, tostring(use_quantity_matching), tostring(mode), #items))
+    print("  [" .. table.concat(items, "、") .. "]")
+end
+
+-- 可做料理列表
 function Logger.LogMatchResult(recipes)
     if not Config.IsDebugLogging() then return end
     if recipes then

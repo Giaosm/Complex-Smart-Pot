@@ -181,8 +181,6 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
     self._recipe_popup = self:AddChild(RecipePopup(self._prefs, function(recipe_item)
         return self:GetCraftableCombinations(recipe_item)
     end, function(recipe_name, ingredients, multi_pot)
-        Logger.Logf("[智能锅] 弹窗烹饪回调: mode=%s multi_pot=%s recipe=%s",
-            tostring(self._auto_cook_mode), tostring(multi_pot), tostring(recipe_name))
         if not self._auto_cook then return end
         if self._auto_cook_mode == "memory" then
             self._auto_cook:QuickCookWithIngredients(recipe_name, ingredients)
@@ -619,15 +617,11 @@ function RecipePanel:_RefreshBackpackRecipes()
     end
 
     -- 库存/容器扫描已统一收口到 inventory_scanner（语义见重构待办第六节行为矩阵）
-    local _t_scan
-    if Logger.IsEnabled() then _t_scan = os.clock() end
+    if Logger.IsEnabled() then self._t_match_start = os.clock() end
     local bag_counts, raw_counts = Scanner.CountIngredientsForMode(
         self._player_inst, self._backpack_check_mode, max_per_type,
         self._cached_device_ingredients, self._container
     )
-    if Logger.IsEnabled() then
-        Logger.Logf("[智能锅] 扫描耗时 %.1fms", (os.clock() - _t_scan) * 1000)
-    end
 
     if next(bag_counts) == nil then
 	self._backpack_recipes = nil
@@ -661,33 +655,54 @@ function RecipePanel:_RefreshBackpackRecipes()
 
 	if not same then
 	    if self.data:ShouldUseMatchTask(bag_counts, fixed_counts, self._max_slots, self._use_quantity_matching) then
-	        local cached = self.data:GetCachedMatch(bag_counts, fixed_counts, pot_counts, self._cooker_recipes, self._max_slots, self._use_quantity_matching)
-	        if cached then
-	            self._backpack_recipes = {}  -- 拷贝，避免槽位检查污染缓存表
-	            for k, _ in pairs(cached) do
-	                self._backpack_recipes[k] = true
+	        -- 优先查组合映射缓存：命中即可立即展示（部分或完整），不完整则后台续算
+	        local map_entry = self.data:GetCachedCombosMap(bag_counts, fixed_counts, pot_counts, self._cooker_recipes, self._max_slots, self._use_quantity_matching)
+	        if map_entry and next(map_entry.combos) then
+	            local set = self.data:GetRecipesFromCombosMap(map_entry)
+	            self._backpack_recipes = {}
+	            if set then
+	                for k, _ in pairs(set) do
+	                    self._backpack_recipes[k] = true
+	                end
 	            end
+            if map_entry.complete then
+                Logger.Logf("[智能锅][缓存] 命中完整映射缓存，直接使用（无续算）")
+            else
+                -- 部分缓存：先展示，同时续算补齐
+                Logger.Logf("[智能锅][缓存] 命中未完成映射缓存，先展示已算部分并启动续算")
+                self:_StartBackpackMatchTask(bag_counts, fixed_counts, pot_counts)
+                self._match_pending = true
+            end
 	        else
-	            self:_StartBackpackMatchTask(bag_counts, fixed_counts, pot_counts)
-	            self._match_pending = true
+	            local cached = self.data:GetCachedMatch(bag_counts, fixed_counts, pot_counts, self._cooker_recipes, self._max_slots, self._use_quantity_matching)
+	            if cached then
+	                self._backpack_recipes = {}  -- 拷贝，避免槽位检查污染缓存表
+	                for k, _ in pairs(cached) do
+	                    self._backpack_recipes[k] = true
+	                end
+	            else
+	                self:_StartBackpackMatchTask(bag_counts, fixed_counts, pot_counts)
+	                self._match_pending = true
+	            end
 	        end
 	    else
-	        local _t_match
-	        if Logger.IsEnabled() then _t_match = os.clock() end
 	        self._backpack_recipes = self.data:GetMatchingRecipesFromCounts(self._cooker, bag_counts, fixed_counts, self._cooker_recipes, self._max_slots, self._brewing_ingredients, pot_counts, self._use_quantity_matching)
-	        if Logger.IsEnabled() then
-	            Logger.Logf("[智能锅] 匹配耗时 %.1fms", (os.clock() - _t_match) * 1000)
-	        end
-	        Logger.LogWorldContext()
 	    end
 	end
 
         if not self._match_pending then
-            Logger.LogScanResult(self._max_slots, self._use_quantity_matching, self._backpack_check_mode, bag_counts)
-            Logger.LogMatchResult(self._backpack_recipes)
             -- 可做分类还需检查槽位容量：缺的材料种类数不能超过剩余格子
             self:_FilterByPossibleRecipes()
             self._backpack_dirty = false
+            if Logger.IsEnabled() then
+                local elapsed = self._t_match_start and (os.clock() - self._t_match_start) * 1000 or 0
+                Logger.Logf("[智能锅] 扫描+匹配总耗时 %.1fms", elapsed)
+                Logger.LogWorldContext()
+                Logger.LogScanResult(self._max_slots, self._use_quantity_matching, self._backpack_check_mode, bag_counts)
+                Logger.LogMatchResult(self._backpack_recipes)
+                self._t_match_start = nil
+            end
+            if self.data.LogCacheStats then self.data:LogCacheStats() end
         end
     end
     -- 分片模式保持 dirty 由 OnUpdate 驱动，完成后再置 false
@@ -788,6 +803,15 @@ end
 
 function RecipePanel:_CancelBackpackMatchTask()
     if self._match_task then
+        -- 面板被打断/库存变化前，把已算出的组合映射（partial）写入缓存（标记未完成）
+        -- 下次开锅命中即可先展示已算部分，再后台续算补齐，避免完全重算
+        if self._match_task_cache_info then
+            local info = self._match_task_cache_info
+            local partial_combos = self._match_task:GetPartialCombos()
+            if partial_combos and next(partial_combos) then
+                self.data:CacheCombosMap(partial_combos, info[1], info[2], info[3], self._cooker_recipes, self._max_slots, self._use_quantity_matching, false)
+            end
+        end
         self._match_task:Cancel()
         self._match_task = nil
     end
@@ -826,7 +850,7 @@ function RecipePanel:_StepBackpackMatchTask()
             end
         end
         if done then
-            self:_ApplyBackpackMatchResult(task:GetResult())
+            self:_ApplyBackpackMatchResult(task:GetResult(), task:GetPartialCombos())
             return
         end
         if os.clock() * 1000 - t0 >= frame_budget then
@@ -847,13 +871,14 @@ function RecipePanel:_ApplyBackpackPartialDisplay()
 end
 
 -- 应用分片匹配结果（后处理 + 写缓存 + 刷新）
-function RecipePanel:_ApplyBackpackMatchResult(result)
+function RecipePanel:_ApplyBackpackMatchResult(result, combos_map)
     self._match_task = nil
     self._match_step_scheduled = false
     self._last_backpack_partial = nil
     if self._match_task_cache_info then
         local info = self._match_task_cache_info
-        self.data:CacheMatch(result, info[1], info[2], info[3], self._cooker_recipes, self._max_slots, self._use_quantity_matching)
+        -- 任务完成时把完整组合映射写入缓存（标记 complete=true），供组合路径复用
+        self.data:CacheMatch(result, info[1], info[2], info[3], self._cooker_recipes, self._max_slots, self._use_quantity_matching, combos_map, true)
         self._match_task_cache_info = nil
     end
     self._backpack_recipes = {}
@@ -864,12 +889,18 @@ function RecipePanel:_ApplyBackpackMatchResult(result)
     end
     self._match_pending = false
 
-    Logger.LogScanResult(self._max_slots, self._use_quantity_matching, self._backpack_check_mode, self._cached_bag_counts or {})
-    Logger.LogMatchResult(self._backpack_recipes)
     -- 可做分类还需检查槽位容量：缺的材料种类数不能超过剩余格子
     self:_FilterByPossibleRecipes()
 
     self._backpack_dirty = false
+    if Logger.IsEnabled() then
+        local elapsed = self._t_match_start and (os.clock() - self._t_match_start) * 1000 or 0
+        Logger.Logf("[智能锅] 扫描+匹配总耗时 %.1fms", elapsed)
+        Logger.LogScanResult(self._max_slots, self._use_quantity_matching, self._backpack_check_mode, self._cached_bag_counts or {})
+        Logger.LogMatchResult(self._backpack_recipes)
+        self._t_match_start = nil
+    end
+    if self.data.LogCacheStats then self.data:LogCacheStats() end
     if self.RefreshDisplay then self:RefreshDisplay() end
 end
 
@@ -1171,6 +1202,69 @@ function RecipePanel:_SyncComboStatusToPopup()
     end
 end
 
+-- 从匹配路径共享的组合映射缓存中还原目标料理的可做组合
+-- 返回 { ingredients={ {prefab,count}, ... }, portions=N } 列表，未命中返回 nil
+function RecipePanel:_RestoreCombosFromMap(recipe_item)
+    local bag_counts = self._cached_bag_counts
+    if not bag_counts or next(bag_counts) == nil then return nil end
+    local pot_counts = self._cached_pot_counts or {}
+    local raw_bag_counts = self._cached_bag_counts_raw or bag_counts
+
+    -- 匹配缓存 key 用 fixed_counts（锅里占的槽）；不可堆叠设备 pot_counts 即 fixed_counts
+    local map_entry = self.data:GetCachedCombosMap(bag_counts, pot_counts, pot_counts, self._cooker_recipes, self._max_slots, self._use_quantity_matching)
+    if not map_entry or next(map_entry.combos) == nil then
+        return nil
+    end
+    local map_count = 0
+    for _ in pairs(map_entry.combos) do map_count = map_count + 1 end
+    Logger.Logf("[智能锅][缓存][组合复用] 命中映射缓存 recipe=%s combos=%d complete=%s",
+        recipe_item.prefab, map_count, tostring(map_entry.complete))
+
+    local target = recipe_item.prefab
+    local target_priority = recipe_item.recipe_def and recipe_item.recipe_def.priority or 0
+
+    -- 每个组合只能产出最高优先级的料理；目标料理须是该组合的最高优先级之一才视为可做
+    local available = {}
+    for k, v in pairs(pot_counts) do available[k] = (available[k] or 0) + v end
+    for k, v in pairs(raw_bag_counts) do available[k] = (available[k] or 0) + v end
+
+    local result = {}
+    for combo_key, matched in pairs(map_entry.combos) do
+        -- 计算该组合的最高优先级
+        local max_p = nil
+        for _, p in pairs(matched) do
+            if max_p == nil or p > max_p then max_p = p end
+        end
+        if max_p ~= nil and matched[target] ~= nil and max_p == target_priority then
+            -- 还原组合：组合串 "a,b,b" 展开为槽位列表（普通锅每个槽位一个食材，显示独立图标）
+            local ingredients = {}
+            for prefab in combo_key:gmatch("[^,]+") do
+                table.insert(ingredients, prefab)
+            end
+            -- 份数 = 最紧缺食材可提供的份数
+            local counts = {}
+            for _, prefab in ipairs(ingredients) do
+                counts[prefab] = (counts[prefab] or 0) + 1
+            end
+            local portions = math.huge
+            for prefab, cnt in pairs(counts) do
+                local have = (available[prefab] or 0)
+                if cnt > 0 then
+                    portions = math.min(portions, math.floor(have / cnt))
+                end
+            end
+            portions = math.max(1, portions)
+            table.insert(result, { ingredients = ingredients, portions = portions })
+        end
+    end
+
+    if #result == 0 then
+        return nil
+    end
+    table.sort(result, function(a, b) return a.portions > b.portions end)
+    return result
+end
+
 function RecipePanel:GetCraftableCombinations(recipe_item)
     if not recipe_item then return nil end
 
@@ -1187,6 +1281,14 @@ function RecipePanel:GetCraftableCombinations(recipe_item)
     self._combo_status = nil
     self:_SyncComboStatusToPopup()
 
+    -- 复用匹配路径的组合映射缓存：不可堆叠设备优先从映射还原，避免重复枚举
+    if not self._use_quantity_matching then
+        local restored = self:_RestoreCombosFromMap(recipe_item)
+        if restored ~= nil then
+            return restored
+        end
+    end
+
     -- 组合量巨大（不可堆叠 + 食材种类多）且未在计算时：先查缓存，命中直接返回，未命中启动分片任务
     if not self._use_quantity_matching and self:_ShouldUseComboTask() then
         local cached = self.data:GetCachedCombos(recipe_item, self._cached_bag_counts, self._cached_pot_counts, self._cached_bag_counts_raw, self._use_quantity_matching)
@@ -1197,10 +1299,6 @@ function RecipePanel:GetCraftableCombinations(recipe_item)
         return nil
     end
 
-    Logger.Logf("[智能锅] GetCraftableCombinations: recipe=%s qmatch=%s max_slots=%d",
-        recipe_item.prefab, tostring(self._use_quantity_matching), self._max_slots or 4)
-    local _t_combo
-    if Logger.IsEnabled() then _t_combo = os.clock() end
     local r = self.data:GetRecipeCraftableCombos(
         recipe_item,
         self._cached_bag_counts,
@@ -1211,13 +1309,6 @@ function RecipePanel:GetCraftableCombinations(recipe_item)
         self._cached_bag_counts_raw,
         self._cached_sorted_defs
     )
-    if Logger.IsEnabled() then
-        Logger.Logf("[智能锅] 可做组合耗时 %.1fms", (os.clock() - _t_combo) * 1000)
-    end
-    Logger.LogLazy(function()
-        return string.format("[智能锅] GetCraftableCombinations 返回: recipe=%s result=%s",
-            recipe_item.prefab, r and ("count=" .. #r) or "nil")
-    end)
     return r
 end
 

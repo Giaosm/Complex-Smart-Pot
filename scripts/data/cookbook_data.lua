@@ -98,8 +98,24 @@ function CookbookData:GetCachedMatch(bag_counts, fixed_counts, pot_counts, cooke
     return ComboMatcher.GetCachedMatch(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
 end
 
-function CookbookData:CacheMatch(result, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
-    ComboMatcher.CacheMatch(result, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+function CookbookData:CacheMatch(result, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, combos_map, complete)
+    ComboMatcher.CacheMatch(result, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, combos_map, complete)
+end
+
+function CookbookData:GetCachedCombosMap(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+    return ComboMatcher.GetCachedCombosMap(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+end
+
+function CookbookData:CacheCombosMap(combos_map, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, complete)
+    ComboMatcher.CacheCombosMap(combos_map, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, complete)
+end
+
+function CookbookData:GetRecipesFromCombosMap(cache_entry)
+    return ComboMatcher.GetRecipesFromCombosMap(cache_entry)
+end
+
+function CookbookData:LogCacheStats()
+    ComboMatcher.LogCacheStats()
 end
 
 function CookbookData:CreateMatchTask(cooker, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, pot_counts, use_quantity_matching)
