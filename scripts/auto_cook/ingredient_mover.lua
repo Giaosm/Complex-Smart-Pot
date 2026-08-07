@@ -139,12 +139,23 @@ local function SyncPotContents(container, cont, required, auto_cook_source, cook
         end
     end
 
+    -- 判断是否"4槽可堆叠 cooker"（如 medal_cookpot）：这种锅需要每格只放 1 个并占满 4 槽，
+    -- 因此判断锅里已有食材时也必须按"每格最多 1 个"保留，把堆叠拆开，否则锅无法占满、烹饪无法触发
+    local accepts_stacks = container and container.AcceptsStacks ~= nil and container:AcceptsStacks()
+    local ok_slots, num_slots = pcall(function() return container:GetNumSlots() end)
+    local ok_type, cont_type = pcall(function() return container.type end)
+    local is_stackable_four_slot_cooker = accepts_stacks
+        and ok_slots and num_slots == 4
+        and ok_type and cont_type == "cooker"
+
     for slot, item in pairs(items) do
         if item and item.prefab then
             local stack_size = GetStackSize(item)
             local n = need[item.prefab] or 0
             if n > 0 then
-                local keep = math.min(n, stack_size)
+                -- 4槽可堆叠锅：每格最多保留 1 个（拆开堆叠占满格子）；其他锅按实际数量保留
+                local keep_per_slot = is_stackable_four_slot_cooker and 1 or stack_size
+                local keep = math.min(n, keep_per_slot)
                 local excess = stack_size - keep
                 need[item.prefab] = n - keep
                 if excess > 0 then
@@ -171,15 +182,6 @@ local function SyncPotContents(container, cont, required, auto_cook_source, cook
     local found = CheckIng(need, auto_cook_source, cont)
     if not found then return false end
 
-    local accepts_stacks = container and container.AcceptsStacks ~= nil and container:AcceptsStacks()
-    -- 某些 mod 锅虽然支持堆叠，但 validfn 要求 4 个槽位都必须有食材（如 medal_cookpot）。
-    -- 如果一次性按 count 搬运，会把所有食材堆到同一个格子里，导致无法烹饪。
-    -- 所以只要是 4 槽且支持堆叠的 cooker，就强制按单个搬运，让食材均匀占满 4 个槽位。
-    local ok_slots, num_slots = pcall(function() return container:GetNumSlots() end)
-    local ok_type, cont_type = pcall(function() return container.type end)
-    local is_stackable_four_slot_cooker = accepts_stacks
-        and ok_slots and num_slots == 4
-        and ok_type and cont_type == "cooker"
     if accepts_stacks and not is_stackable_four_slot_cooker then
         for _, slot in ipairs(found) do
             MoveItemFromCountOfSlot(slot.slot, slot.cont, cont, slot.count)
