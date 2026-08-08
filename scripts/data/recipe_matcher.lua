@@ -228,8 +228,13 @@ function Matcher.GetPossibleRecipes(db, prefab_list, ingredients, max_slots, max
         table.sort(ck)
         cache_key = cache_key .. "|" .. table.concat(ck, ",")
     end
-    -- 环境指纹：季节/月相/节日会影响部分模组料理的可做性，纳入 key 使环境变化时缓存自动失效
-    cache_key = cache_key .. "|E:" .. Logger.GetEnvironmentFingerprint()
+    -- 环境指纹：仅当锅里食材可能涉及环境料理时才纳入（避免普通料理缓存随环境变化失效）
+    -- 锅里已放食材（prefab_list/counts）决定了这次可做性判断是否可能受环境料理影响
+    local prefab_counts = {}
+    for _, p in ipairs(prefab_list) do prefab_counts[p] = (prefab_counts[p] or 0) + 1 end
+    if db:HasEnvironmentTypes(nil, prefab_counts, counts) then
+        cache_key = cache_key .. "|E:" .. Logger.GetEnvironmentFingerprint()
+    end
     local cached = CacheGet(cache_key)
     if cached then
         return cached

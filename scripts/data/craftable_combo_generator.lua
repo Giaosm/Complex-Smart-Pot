@@ -31,6 +31,7 @@ local function CacheSet(key, value)
 end
 
 -- 构建组合缓存 key（料理 + bag + pot + raw_bag + 数量匹配标志 + 环境指纹）
+-- 环境指纹按该料理自身维度纳入：普通料理不带指纹（永久复用），环境料理带对应维度指纹（按需失效）
 local function BuildComboCacheKey(recipe_item, bag_counts, pot_counts, raw_bag_counts, use_quantity_matching)
     local cache_key = recipe_item.prefab .. "|q" .. (use_quantity_matching and "1" or "0") .. "|"
     local keys = {}
@@ -39,7 +40,12 @@ local function BuildComboCacheKey(recipe_item, bag_counts, pot_counts, raw_bag_c
     for k, v in pairs(raw_bag_counts or {}) do keys[#keys + 1] = "r" .. k .. "=" .. v end
     table.sort(keys)
     cache_key = cache_key .. table.concat(keys, ";")
-    cache_key = cache_key .. "|E:" .. Logger.GetEnvironmentFingerprint()
+    if recipe_item.is_environment_locked then
+        local fp = Logger.GetEnvFingerprintForDim(recipe_item.env_dim)
+        if fp then
+            cache_key = cache_key .. "|" .. fp
+        end
+    end
     return cache_key
 end
 

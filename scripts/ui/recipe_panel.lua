@@ -78,6 +78,7 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
     self._cached_pot_counts = nil
     self._cached_fixed_counts = nil  -- 锅里按槽计的固定食材数（每格1，不含堆叠）
     self._last_pot_counts = nil
+    self._cached_env_fingerprint = nil  -- 上次匹配时的环境指纹（季节+月相），环境变化需重算
     self._slot_debounce_task = nil
     self._active_popup_data = nil
     self._backpack_dirty = false
@@ -656,6 +657,13 @@ function RecipePanel:_RefreshBackpackRecipes()
 	        end
 	    end
 	end
+	-- 环境变化（季节/月相）影响环境料理可做性：即使背包/锅没变，也需重算（否则秋季料理在春季仍显示可做）
+	if same then
+	    local cur_env = Logger.GetEnvFingerprintForDim("season+moon")
+	    if self._cached_env_fingerprint ~= cur_env then
+	        same = false
+	    end
+	end
 	if same then
 	    self._backpack_dirty = false
 	    if not self._active_popup_data then
@@ -668,6 +676,7 @@ function RecipePanel:_RefreshBackpackRecipes()
 	        self._cached_bag_counts[k] = math.min(v, max_per_type)
 	    end
 	    self._last_pot_counts = pot_counts
+	    self._cached_env_fingerprint = Logger.GetEnvFingerprintForDim("season+moon")
 	end
 	self._cached_bag_counts_raw = raw_counts
 
@@ -835,6 +844,10 @@ function RecipePanel:_CancelBackpackMatchTask()
             if partial_combos and next(partial_combos) then
                 self.data:CacheCombosMap(partial_combos, info[1], info[2], info[3], self._cooker_recipes, self._max_slots, self._use_quantity_matching, false)
             end
+            local partial_env_combos = self._match_task:GetPartialEnvCombos()
+            if partial_env_combos and next(partial_env_combos) then
+                self.data:CacheEnvCombosMap(partial_env_combos, info[1], info[2], info[3], self._cooker_recipes, self._max_slots, self._use_quantity_matching, false)
+            end
         end
         self._match_task:Cancel()
         self._match_task = nil
@@ -860,13 +873,23 @@ function RecipePanel:_StepBackpackMatchTask()
     local partial_updated = false
     while self._match_task do
         local done = task:Step(12)
+        -- 渐进显示：合并普通+环境料理结果。必须拷贝到 new_bp，不能原地改 partial
+        -- （partial 与 task:GetResult() 共享表，原地改会污染普通 result 缓存）
         local partial = task:GetPartialResult()
-        if partial ~= nil then
+        local partial_env = task:GetPartialResultEnv()
+        if partial ~= nil or partial_env ~= nil then
             local new_bp = {}
-            for k, _ in pairs(partial) do
-                new_bp[k] = true
+            if partial ~= nil then
+                for k, _ in pairs(partial) do
+                    new_bp[k] = true
+                end
             end
-            -- 仅当有新增料理时才刷新，避免无变化刷屏；拷贝避免污染协程内部 result
+            if partial_env ~= nil then
+                for k, _ in pairs(partial_env) do
+                    new_bp[k] = true
+                end
+            end
+            -- 仅当有新增料理才刷新，避免无变化刷屏
             if not SameKeySet(self._last_backpack_partial, new_bp) then
                 self._backpack_recipes = new_bp
                 self._last_backpack_partial = {}
@@ -877,7 +900,7 @@ function RecipePanel:_StepBackpackMatchTask()
             end
         end
         if done then
-            self:_ApplyBackpackMatchResult(task:GetResult(), task:GetPartialCombos())
+            self:_ApplyBackpackMatchResult(task:GetResult(), task:GetPartialCombos(), task:GetPartialResultEnv(), task:GetPartialEnvCombos())
             return
         end
         if os.clock() * 1000 - t0 >= frame_budget then
@@ -898,7 +921,7 @@ function RecipePanel:_ApplyBackpackPartialDisplay()
 end
 
 -- 应用分片匹配结果（后处理 + 写缓存 + 刷新）
-function RecipePanel:_ApplyBackpackMatchResult(result, combos_map)
+function RecipePanel:_ApplyBackpackMatchResult(result, combos_map, result_env, env_combos_map)
     self._match_task = nil
     self._match_step_scheduled = false
     self._last_backpack_partial = nil
@@ -908,16 +931,30 @@ function RecipePanel:_ApplyBackpackMatchResult(result, combos_map)
     if self._match_task_cache_info then
         local info = self._match_task_cache_info
         -- 任务完成时把完整组合映射写入缓存（标记 complete=true），供组合路径复用
-        self.data:CacheMatch(result, info[1], info[2], info[3], self._cooker_recipes, self._max_slots, self._use_quantity_matching, combos_map, true)
+        self.data:CacheMatch(result, info[1], info[2], info[3], self._cooker_recipes, self._max_slots, self._use_quantity_matching, combos_map, true, nil, result_env, env_combos_map)
         self._match_task_cache_info = nil
     end
     self._backpack_recipes = {}
+    -- env_only 补算场景：result（普通）为 nil，需从缓存合并普通料理部分 + 新算的环境料理部分
     if result ~= nil then
         for k, _ in pairs(result) do
             self._backpack_recipes[k] = true
         end
+    else
+        local cached = self.data:GetCachedMatch(self._cached_bag_counts, self._cached_fixed_counts or self._cached_pot_counts, self._cached_pot_counts, self._cooker_recipes, self._max_slots, self._use_quantity_matching)
+        if cached then
+            for k, _ in pairs(cached) do
+                self._backpack_recipes[k] = true
+            end
+        end
+    end
+    if result_env ~= nil then
+        for k, _ in pairs(result_env) do
+            self._backpack_recipes[k] = true
+        end
     end
     self._match_pending = false
+    self._cached_env_fingerprint = Logger.GetEnvFingerprintForDim("season+moon")
 
     -- 可做分类还需检查槽位容量：缺的材料种类数不能超过剩余格子
     self:_FilterByPossibleRecipes()
@@ -1181,6 +1218,10 @@ function RecipePanel:_RestoreCombosFromMap(recipe_item)
 
     local result = {}
     for combo_key, matched in pairs(map_entry.combos) do
+        -- 环境组合映射的值为 { dims={...}, matched={prefab=priority} } 嵌套结构，需取子表
+        if type(matched) == "table" and matched.matched ~= nil then
+            matched = matched.matched
+        end
         -- 计算该组合的最高优先级
         local max_p = nil
         for _, p in pairs(matched) do

@@ -61,6 +61,31 @@ function Logger.GetEnvironmentFingerprint()
     }, "|")
 end
 
+-- 按环境维度计算指纹，供"单料理级"缓存按需纳入对应维度：
+--   dim="season"      → 仅季节
+--   dim="moon"        → 仅月相（满月/新月/其它）
+--   dim="season+moon" → 季节 + 月相
+--   dim=nil 或其它    → 返回 nil（表示不依赖环境，key 不纳入指纹）
+function Logger.GetEnvFingerprintForDim(dim)
+    if dim == nil then return nil end
+    local moonphase = GetCurrentMoonPhase()
+    local moon_key = "other"
+    if moonphase == "full" then
+        moon_key = "full"
+    elseif moonphase == "new" then
+        moon_key = "new"
+    end
+    local season = GetCurrentSeason() or "?"
+    if dim == "season" then
+        return "E:" .. season
+    elseif dim == "moon" then
+        return "E:" .. moon_key
+    elseif dim == "season+moon" then
+        return "E:" .. season .. "|" .. moon_key
+    end
+    return nil
+end
+
 -- 季节/月相/节日的显示名称映射
 local _SEASON_NAMES = {
     autumn = "秋季",

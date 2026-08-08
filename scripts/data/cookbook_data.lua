@@ -30,6 +30,11 @@ function CookbookData:RefreshEnvironmentLocked()
     return Collector.RefreshEnvironmentLocked(self)
 end
 
+-- 当前食材组合是否可能涉及环境料理（用于匹配缓存 key 决定是否纳入环境指纹）
+function CookbookData:HasEnvironmentTypes(bag_counts, fixed_counts, pot_counts)
+    return Collector.HasEnvironmentTypes(self, bag_counts, fixed_counts, pot_counts)
+end
+
 function CookbookData:GetIngredientAliases()
     return self._ingredient_aliases
 end
@@ -89,20 +94,24 @@ function CookbookData:ShouldUseMatchTask(bag_counts, fixed_counts, max_slots, us
 end
 
 -- 分片匹配缓存读写（与同步匹配共用缓存，避免每次开锅/库存变化都重算）
-function CookbookData:GetCachedMatch(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
-    return ComboMatcher.GetCachedMatch(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+function CookbookData:GetCachedMatch(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, has_env)
+    return ComboMatcher.GetCachedMatch(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, has_env)
 end
 
-function CookbookData:CacheMatch(result, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, combos_map, complete)
-    ComboMatcher.CacheMatch(result, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, combos_map, complete)
+function CookbookData:CacheMatch(result, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, combos_map, complete, has_env, result_env, env_combos_map)
+    ComboMatcher.CacheMatch(result, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, combos_map, complete, has_env, result_env, env_combos_map)
 end
 
-function CookbookData:GetCachedCombosMap(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
-    return ComboMatcher.GetCachedCombosMap(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+function CookbookData:GetCachedCombosMap(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, has_env)
+    return ComboMatcher.GetCachedCombosMap(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, has_env)
 end
 
-function CookbookData:CacheCombosMap(combos_map, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, complete)
-    ComboMatcher.CacheCombosMap(combos_map, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, complete)
+function CookbookData:CacheCombosMap(combos_map, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, complete, has_env)
+    ComboMatcher.CacheCombosMap(combos_map, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, complete, has_env)
+end
+
+function CookbookData:CacheEnvCombosMap(env_combos_map, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, complete)
+    ComboMatcher.CacheEnvCombosMap(env_combos_map, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, complete)
 end
 
 function CookbookData:GetRecipesFromCombosMap(cache_entry)

@@ -151,30 +151,119 @@ local _CRISPY_NUTS_SEASONAL = {
     nuts_osmanthus2 = true,        -- 秋季（深拷贝）
 }
 
--- 创意工坊模组 ID：棱镜 / 香脆松子（用于判断对应模组是否启用，未启用则跳过刷新）
-local PRISM_ID = "workshop-1392778117"
-local NUTS_ID  = "workshop-3343873962"
+-- 环境料理硬编码完整配方表（照抄两模组源码 test，去掉环境条件，仅保留食材/tag 需求）。
+-- 用于 HasEnvironmentTypes 判断当前食材是否"完整满足"某环境料理配方；完整满足才带环境指纹，
+-- 避免蜂蜜/冰块等常见食材被误判导致缓存频繁失效。判断按保守 >= 比较（names_eq 亦同）。
+-- 字段：dim 环境维度(season/moon/season+moon)；names/names_eq 具体食材(>=)；names_or 二选一；
+--       tags 标签(>=)。  棱镜：花=petals_legion 装饰=decoration 甜=sweetener 冰=frozen 怪=monster
+-- 香脆松子：松果=pinecone。nuts_osmanthus2 为 osmanthus 深拷贝，配方相同，只留一份。
+local _ENV_RECIPES = {
+    -- 月饼
+    { dim = "season+moon", tags = { petals_legion = 2, decoration = 1, sweetener = 1 } },
+    -- 花儿粑
+    { dim = "moon", tags = { petals_legion = 2, decoration = 1, sweetener = 1 } },
+    -- 月酿
+    { dim = "season+moon", tags = { petals_legion = 2, decoration = 1, frozen = 1 } },
+    -- 花儿酒
+    { dim = "moon", tags = { petals_legion = 2, decoration = 1, frozen = 1 } },
+    -- 临别的纸杯蛋糕
+    { dim = "moon", names_or = { { "red_cap", "red_cap_cooked" } }, tags = { monster = 1, decoration = 1 } },
+    -- 松香饺子(春)
+    { dim = "season", names = { pinecone = 1, corn = 1, carrot = 1 }, tags = { meat = 1 } },
+    -- 绿豆汤(夏)
+    { dim = "season", names = { pinecone = 1 }, names_eq = { watermelon = 2 }, tags = { frozen = 1 } },
+    -- 红薯糖水(冬)
+    { dim = "season", names = { pinecone = 1, carrot = 1 }, names_eq = { pumpkin = 2 } },
+    -- 松间云雾奶茶(秋)
+    { dim = "season", names = { pinecone = 1 }, names_eq = { pumpkin = 2 }, tags = { sweetener = 1 } },
+    -- 桂馥兰香奶茶(秋) 及其深拷贝
+    { dim = "season", names = { pinecone = 1 }, names_or = { { "pumpkin", "pumpkin_cooked" } }, names_eq = { petals_orchid = 1 }, tags = { sweetener = 1 } },
+}
 
--- 模组启用判断：只判断对应模组是否启用（松判断）
-local function _IsModEnabled(modid)
-    return KnownModIndex ~= nil and KnownModIndex:IsModEnabled(modid)
+-- 解析料理受环境影响维度：season/moon/season+moon；nil 表示非环境料理。
+-- 不依赖 KnownModIndex（打标时机早于模组启用表加载），料理能进 db.all 即说明对应模组已启用。
+local function _EnvironmentDimension(item)
+    local rd = item.recipe_def
+    -- 棱镜：cook_cant 含"专属"即为环境料理
+    if rd and rd.cook_cant and type(rd.cook_cant) == "string" and rd.cook_cant:find("专属") then
+        local cant = rd.cook_cant
+        if cant:find("秋季满月") then return "season+moon" end
+        -- 满月/新月天专属视为仅月相
+        if cant:find("满月") or cant:find("新月") then return "moon" end
+        return "season+moon"  -- 其它"专属"保守归为季节+月相，宁可多刷新
+    end
+    -- 香脆松子：季节料理（关闭"随时可做"时才受限）
+    if _CRISPY_NUTS_SEASONAL[item.prefab] then
+        if _G.TUNING and _G.TUNING.SEASONAL_FOOD == true then return nil end
+        return "season"
+    end
+    return nil
 end
 
--- 判断料理是否受环境影响（用于环境变化时局部刷新）
+-- 判断料理是否受环境影响（等价于 _EnvironmentDimension 非 nil）
 local function _IsEnvironmentLocked(item)
-    local rd = item.recipe_def
-    -- 棱镜：cook_cant 含"专属"即为环境料理（满月/新月/季节），且棱镜模组已启用
-    if rd and rd.cook_cant and type(rd.cook_cant) == "string" and rd.cook_cant:find("专属") then
-        return _IsModEnabled(PRISM_ID)
-    end
-    -- 香脆松子：季节料理（关闭"随时可做"时才受限），且香脆松子模组已启用
-    if _CRISPY_NUTS_SEASONAL[item.prefab] then
-        if _G.TUNING and _G.TUNING.SEASONAL_FOOD == true then
-            return false
+    return _EnvironmentDimension(item) ~= nil
+end
+
+-- 判断食材(names/tags)是否"完整满足"环境料理配方 rec；names/names_eq 按 >=，names_or 任一生/熟其一 >=1
+local function _EnvRecipeMatches(names, tags, rec)
+    if rec.names then
+        for ing, need in pairs(rec.names) do
+            if (names[ing] or 0) < need then
+                return false
+            end
         end
-        return _IsModEnabled(NUTS_ID)
     end
-    return false
+    if rec.names_eq then
+        for ing, need in pairs(rec.names_eq) do
+            if (names[ing] or 0) < need then
+                return false
+            end
+        end
+    end
+    if rec.names_or then
+        for _, group in ipairs(rec.names_or) do
+            local ok = false
+            for _, ing in ipairs(group) do
+                if (names[ing] or 0) >= 1 then
+                    ok = true
+                    break
+                end
+            end
+            if not ok then
+                return false
+            end
+        end
+    end
+    if rec.tags then
+        for tag, need in pairs(rec.tags) do
+            if (tags[tag] or 0) < need then
+                return false
+            end
+        end
+    end
+    return true
+end
+
+-- 将当前食材计数(bag/fixed/pot)合并为 names/tags，用于环境料理配方匹配
+local function _CountsToNamesTags(bag_counts, fixed_counts, pot_counts, ingredients)
+    local names = {}
+    local tags = {}
+    local function add(counts)
+        for ing, n in pairs(counts or {}) do
+            names[ing] = (names[ing] or 0) + n
+            local data = ingredients[ing]
+            if data and data.tags then
+                for tag in pairs(data.tags) do
+                    tags[tag] = (tags[tag] or 0) + n
+                end
+            end
+        end
+    end
+    add(bag_counts)
+    add(fixed_counts)
+    add(pot_counts)
+    return names, tags
 end
 
 local Collector = {}
@@ -373,6 +462,19 @@ function Collector.CollectAll(db)
     Collector.EnsureMyth(db)
     Collector.CollectXd(db)
 
+    -- 为环境料理打标（is_environment_locked / env_dim）
+    -- 供"单料理级"缓存（craftable_combo_generator）按维度取指纹用；
+    -- 整锅级缓存是否涉及环境料理，由 HasEnvironmentTypes 用硬编码配方表实时判断，无需这些字段。
+    for _, item in ipairs(db.all) do
+        item.is_environment_locked = false
+        item.env_dim = nil
+        local dim = _EnvironmentDimension(item)
+        if dim then
+            item.is_environment_locked = true
+            item.env_dim = dim
+        end
+    end
+
     for _, list in pairs(db.categories) do
         table.sort(list, _by_hash)
     end
@@ -398,6 +500,31 @@ function Collector.RefreshEnvironmentLocked(db)
         end
     end
     return refreshed
+end
+
+-- 判断给定食材(names/tags)是否满足任一环境料理配方，返回其环境维度集合（去重）
+-- 返回 nil 表示普通组合（不涉及任何环境料理），否则返回字符串集合 { [dim]=true }
+-- 供匹配枚举时区分"普通组合 / 环境组合"，环境组合的映射需按维度指纹缓存
+function Collector.IsEnvCombination(names, tags)
+    if not _ENV_RECIPES or #_ENV_RECIPES == 0 then
+        return nil
+    end
+    local dims
+    for _, rec in ipairs(_ENV_RECIPES) do
+        if _EnvRecipeMatches(names, tags, rec) then
+            if dims == nil then dims = {} end
+            dims[rec.dim] = true
+        end
+    end
+    return dims
+end
+
+-- 判断当前食材组合（bag/fixed/pot）是否可能涉及任何环境料理
+-- 供整份背包状态快速判断；详见 Collector.IsEnvCombination
+function Collector.HasEnvironmentTypes(db, bag_counts, fixed_counts, pot_counts)
+    local ingredients = cooking.ingredients
+    local names, tags = _CountsToNamesTags(bag_counts, fixed_counts, pot_counts, ingredients)
+    return Collector.IsEnvCombination(names, tags) ~= nil
 end
 
 return Collector

@@ -2,6 +2,7 @@
 local cooking = require("cooking")
 local Config = require("config/config_manager")
 local Logger = require("debug/logger")
+local Collector = require("data/recipe_data_collector")
 
 local ComboMatcher = {}
 
@@ -14,6 +15,13 @@ local _cache_keys = {}  -- LRU 顺序，最新的在末尾
 -- complete=false 表示部分结果（面板被打断时写入），命中后需续算补齐
 local _combo_map_cache = {}
 local _map_cache_keys = {}  -- LRU 顺序，最新的在末尾
+
+-- 环境料理专用缓存：普通料理结果跨环境复用（无指纹缓存）；
+-- 环境料理结果随季节/月相变化，需按环境指纹单独缓存，环境变化时只重算环境料理部分（量小）。
+local _env_match_cache = {}
+local _env_match_keys = {}
+local _env_map_cache = {}
+local _env_map_keys = {}
 
 -- ============ 缓存统计（调试用） ============
 -- 统计组合映射缓存的"组合条目数"，用于输出"组合缓存 / 本次新增 / 命中率"
@@ -71,10 +79,26 @@ local function MapCacheSet(key, value)
     _UpdateMapComboStats()
 end
 
+-- 写入 _match_cache 并维护 LRU 顺序（最新在末尾，超限淘汰表头最久未用）
+local function SetCache(key, value)
+    if _match_cache[key] == nil then
+        table.insert(_cache_keys, key)
+        if #_cache_keys > CACHE_MAX then
+            local old = table.remove(_cache_keys, 1)
+            _match_cache[old] = nil
+        end
+    end
+    _match_cache[key] = value
+end
+
 -- 从映射聚合出"能做的料理集合"：每个组合取最高优先级料理的并集
 local function CombineCombosToSet(combos)
     local set = {}
     for _, matched in pairs(combos) do
+        -- 环境组合映射的值为 { dims={...}, matched={prefab=priority} } 嵌套结构，需取子表
+        if type(matched) == "table" and matched.matched ~= nil then
+            matched = matched.matched
+        end
         local max_p = nil
         for prefab, p in pairs(matched) do
             if max_p == nil or p > max_p then max_p = p end
@@ -89,15 +113,22 @@ local function CombineCombosToSet(combos)
 end
 
 
-local function BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+local function BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, has_env)
     local parts = {}
     table.insert(parts, tostring(max_slots))
     table.insert(parts, use_quantity_matching and "Q" or "S")
 
+    -- 数量裁剪：不可堆叠设备（烹饪锅）中，超过槽位上限的食材数量不影响"能否做"（只影响份数），
+    -- 份数由 _RestoreCombosFromMap 用原始 bag_counts 实时计算，因此 key 可裁剪，避免超量食材变化导致缓存 miss。
+    -- 可堆叠设备（数量匹配）不裁剪（其匹配结果与数量直接相关）。
+    local cap = use_quantity_matching and math.huge or (max_slots or 4)
+
     local function append_counts(label, counts)
         local keys = {}
         for k, v in pairs(counts or {}) do
-            table.insert(keys, k .. "=" .. v)
+            local vv = v
+            if vv > cap then vv = cap end
+            table.insert(keys, k .. "=" .. vv)
         end
         table.sort(keys)
         table.insert(parts, label .. ":" .. table.concat(keys, ","))
@@ -116,10 +147,41 @@ local function BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipe
         table.insert(parts, "R:" .. table.concat(names, ","))
     end
 
-    -- 环境指纹：季节/月相/节日会影响部分模组料理的可做性，纳入 key 使环境变化时缓存自动失效
-    table.insert(parts, "E:" .. Logger.GetEnvironmentFingerprint())
+    -- 环境指纹：仅当当前食材组合可能涉及环境料理时才纳入（避免普通料理缓存随环境变化失效）
+    -- has_env 由调用方根据当前食材中是否含环境料理需求的食材类型判断
+    if has_env then
+        table.insert(parts, "E:" .. Logger.GetEnvironmentFingerprint())
+    end
 
     return table.concat(parts, "|")
+end
+
+-- 环境缓存 key = 无指纹普通 key + 环境指纹（季节+月相，不含节日；环境料理不依赖节日）
+local function BuildEnvCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+    local plain = BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, false)
+    return plain .. "|" .. Logger.GetEnvFingerprintForDim("season+moon")
+end
+
+local function EnvSetCache(key, value)
+    if _env_match_cache[key] == nil then
+        table.insert(_env_match_keys, key)
+        if #_env_match_keys > CACHE_MAX then
+            local old = table.remove(_env_match_keys, 1)
+            _env_match_cache[old] = nil
+        end
+    end
+    _env_match_cache[key] = value
+end
+
+local function EnvMapCacheSet(key, value)
+    if _env_map_cache[key] == nil then
+        table.insert(_env_map_keys, key)
+        if #_env_map_keys > CACHE_MAX then
+            local old = table.remove(_env_map_keys, 1)
+            _env_map_cache[old] = nil
+        end
+    end
+    _env_map_cache[key] = value
 end
 
 local function BuildNamesTags(prefab_list, ingredient_aliases, ingredients)
@@ -378,9 +440,10 @@ local function MatchByQuantity(cooker, all_items, bag_counts, fixed_counts, cook
 end
 
 -- 不可堆叠设备：slot 级回溯，只枚举相关食材类型
--- yield_fn（可选）：每处理完一个完整组合后调用（result, combos_map）；用于分片执行（方案A），传入 nil 时行为与原来完全一致
--- 返回：result（能做的料理集合）, combos_map（组合串→{prefab=priority}，供组合路径复用）
-local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts, yield_fn)
+-- yield_fn：每处理完一个组合后调用(result,combos_map)，用于分片执行；nil 则一次性算完。
+-- 返回：result/combos_map(普通) + result_env/env_combos_map(环境)。
+-- env_only=true 时只枚举环境料理（普通缓存已命中、仅需补算环境），仅返回环境部分。
+local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts, yield_fn, env_only)
     local total_fixed = 0
     for _, c in pairs(fixed_counts) do
         total_fixed = total_fixed + c
@@ -390,12 +453,14 @@ local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cook
         return nil
     end
 
-    -- 预过滤：先淘汰不可能料理
+    -- 预过滤：先淘汰不可能料理；env_only 时只保留环境料理（避免使用 goto，保证各 Lua 版本兼容）
     local candidate_items = {}
     for _, item in ipairs(all_items) do
-        local cooker_ok = cooker_recipes == nil or cooker_recipes[item.prefab]
-        if cooker_ok and PrefilterRecipe(item, bag_counts, fixed_counts, pot_counts) then
-            table.insert(candidate_items, item)
+        if not (env_only and not item.is_environment_locked) then
+            local cooker_ok = cooker_recipes == nil or cooker_recipes[item.prefab]
+            if cooker_ok and PrefilterRecipe(item, bag_counts, fixed_counts, pot_counts) then
+                table.insert(candidate_items, item)
+            end
         end
     end
 
@@ -432,8 +497,10 @@ local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cook
     end
 
     local n = #types
-    local result = {}
-    local combos_map = {}
+    local result = {}          -- 普通料理可做集合（无指纹缓存，跨环境复用）
+    local result_env = {}      -- 环境料理可做集合（带维度指纹缓存）
+    local combos_map = {}      -- 普通组合→料理映射
+    local env_combos_map = {}  -- 环境组合→料理映射（值 { dims={[dim]=true}, matched={[prefab]=priority} }）
     local sel_prefabs = {}
     local sel_counts = {}
 
@@ -459,8 +526,11 @@ local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cook
                 end
             end
             local names, tags = BuildNamesTags(flat, ingredient_aliases, ingredients)
-            local matched = {}
-            local max_priority = nil
+            -- 普通料理与环境料理分流：普通料理结果可跨环境复用，环境料理结果需按维度指纹缓存
+            local matched_plain = {}
+            local matched_env = {}
+            local max_priority_plain = nil
+            local max_priority_env = nil
             for _, item in ipairs(candidate_items) do
                 local matched_ok = false
                 if item.recipe_def.test ~= nil then
@@ -473,26 +543,58 @@ local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cook
                 end
                 if matched_ok then
                     local p = item.recipe_def.priority or 0
-                    matched[item.prefab] = p
-                    if max_priority == nil or p > max_priority then
-                        max_priority = p
+                    if item.is_environment_locked then
+                        matched_env[item.prefab] = p
+                        if max_priority_env == nil or p > max_priority_env then
+                            max_priority_env = p
+                        end
+                    else
+                        matched_plain[item.prefab] = p
+                        if max_priority_plain == nil or p > max_priority_plain then
+                            max_priority_plain = p
+                        end
                     end
                 end
             end
             -- 记录组合→料理映射（含优先级），供组合路径复用/续算
             local combo_key = table.concat(flat, ",")
-            if next(matched) then
-                combos_map[combo_key] = matched
+            if next(matched_plain) then
+                combos_map[combo_key] = matched_plain
             end
-            if max_priority ~= nil then
-                for prefab, p in pairs(matched) do
-                    if p == max_priority then
+            if next(matched_env) then
+                -- 维度聚合自匹配出的环境料理 env_dim，兜底用食材配方匹配
+                local dims = {}
+                local found = false
+                for _, item in ipairs(candidate_items) do
+                    if matched_env[item.prefab] and item.env_dim then
+                        dims[item.env_dim] = true
+                        found = true
+                    end
+                end
+                if not found then
+                    local env_dims = Collector.IsEnvCombination(names, tags)
+                    if env_dims then
+                        for d in pairs(env_dims) do dims[d] = true end
+                    end
+                end
+                env_combos_map[combo_key] = { dims = dims, matched = matched_env }
+            end
+            if max_priority_plain ~= nil then
+                for prefab, p in pairs(matched_plain) do
+                    if p == max_priority_plain then
                         result[prefab] = true
                     end
                 end
             end
+            if max_priority_env ~= nil then
+                for prefab, p in pairs(matched_env) do
+                    if p == max_priority_env then
+                        result_env[prefab] = true
+                    end
+                end
+            end
             if _yield_fn ~= nil then
-                _yield_fn(result, combos_map)
+                _yield_fn(result, combos_map, result_env, env_combos_map)
             end
             return
         end
@@ -527,7 +629,7 @@ local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cook
             else
                 cand_mod = cand_mod + 1
             end
-            if result[item.prefab] then
+            if result[item.prefab] or result_env[item.prefab] then
                 if item.is_vanilla then
                     fin_vanilla = fin_vanilla + 1
                 else
@@ -538,10 +640,12 @@ local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cook
         Logger.Logf("[智能锅] 候选料理%d(模组%d+原版%d) 最终料理%d(模组%d+原版%d)",
             #candidate_items, cand_mod, cand_vanilla, fin_mod + fin_vanilla, fin_mod, fin_vanilla)
     end
-    return next(result) and result or nil, next(combos_map) and combos_map or nil
+    -- env_combos_map 始终返回表（空表也返回，便于 CacheMatch 写入空环境缓存，避免"计算中"卡死）
+    return next(result) and result or nil, next(combos_map) and combos_map or nil,
+           next(result_env) and result_env or nil, env_combos_map
 end
 
-function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts, use_quantity_matching)
+function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts, use_quantity_matching, has_env)
     if not bag_counts or next(bag_counts) == nil then
         return nil
     end
@@ -552,75 +656,91 @@ function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_
     ingredients = ingredients or cooking.ingredients
     ingredient_aliases = ingredient_aliases or {}
 
-    local cache_key = BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
-    local cached = _match_cache[cache_key]
-    if cached then
-        return next(cached) and cached or nil
+    -- 查缓存：普通(无指纹) + 环境(带指纹)
+    local plain_key = BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, false)
+    local env_key = BuildEnvCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+    local plain_cached = _match_cache[plain_key]
+    local env_cached = _env_match_cache[env_key]
+
+    -- 普通命中但环境 miss（如环境变化）：仅补算环境料理，普通料理用缓存，避免重枚举
+    if plain_cached and not env_cached and not use_quantity_matching then
+        local _, _, result_env, env_combos_map = MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts, nil, true)
+        EnvSetCache(env_key, result_env or {})
+        if env_combos_map and next(env_combos_map) then
+            EnvMapCacheSet(env_key, { combos = env_combos_map, complete = true })
+        end
+        local merged = {}
+        for k in pairs(plain_cached) do merged[k] = true end
+        for k in pairs(result_env or {}) do merged[k] = true end
+        return next(merged) and merged or nil
     end
 
-    local result, combos_map
+    if plain_cached or env_cached then
+        local merged = {}
+        for k in pairs(plain_cached or {}) do merged[k] = true end
+        for k in pairs(env_cached or {}) do merged[k] = true end
+        return next(merged) and merged or nil
+    end
+
+    local result, combos_map, result_env, env_combos_map
     if use_quantity_matching then
         result = MatchByQuantity(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts)
     else
-        result, combos_map = MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts)
+        result, combos_map, result_env, env_combos_map = MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts)
     end
 
-    _match_cache[cache_key] = result or {}
-    for i, k in ipairs(_cache_keys) do
-        if k == cache_key then
-            table.remove(_cache_keys, i)
-            break
-        end
-    end
-    table.insert(_cache_keys, cache_key)
-    if #_cache_keys > CACHE_MAX then
-        local old = table.remove(_cache_keys, 1)
-        _match_cache[old] = nil
-    end
-    -- 同步写入组合映射缓存（标记完整），供组合路径复用
+    SetCache(plain_key, result or {})           -- 普通：无指纹缓存
+    EnvSetCache(env_key, result_env or {})      -- 环境：带指纹缓存
     if not use_quantity_matching then
-        MapCacheSet(cache_key, { combos = combos_map or {}, complete = true })
+        MapCacheSet(plain_key, { combos = combos_map or {}, complete = true })
+        EnvMapCacheSet(env_key, { combos = env_combos_map or {}, complete = true })
+    end
+    -- 返回普通 + 环境合并的可做料理集合
+    if result_env and next(result_env) then
+        local merged = {}
+        for k in pairs(result or {}) do merged[k] = true end
+        for k in pairs(result_env) do merged[k] = true end
+        return next(merged) and merged or nil
     end
     return result
 end
 
 -- 分片路径的缓存读写（与同步 Match 共用同一 _match_cache + LRU）
-function ComboMatcher.GetCachedMatch(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+function ComboMatcher.GetCachedMatch(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, has_env)
     if not bag_counts or next(bag_counts) == nil then
         return nil
     end
-    local cache_key = BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
-    local cached = _match_cache[cache_key]
-    if cached then
-        return next(cached) and cached or nil
+    -- 普通 + 环境都命中才合并返回；任一 miss（如环境变化）返回 nil，由上层补算
+    local plain_key = BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, false)
+    local env_key = BuildEnvCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+    local plain_cached = _match_cache[plain_key]
+    local env_cached = _env_match_cache[env_key]
+    if plain_cached and env_cached then
+        local merged = {}
+        for k in pairs(plain_cached) do merged[k] = true end
+        for k in pairs(env_cached) do merged[k] = true end
+        return next(merged) and merged or nil
     end
     return nil
 end
 
-function ComboMatcher.CacheMatch(result, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, combos_map, complete)
+function ComboMatcher.CacheMatch(result, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, combos_map, complete, has_env, result_env, env_combos_map)
     if not bag_counts or next(bag_counts) == nil then
         return
     end
-    local cache_key = BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
-    _match_cache[cache_key] = result or {}
-    for i, k in ipairs(_cache_keys) do
-        if k == cache_key then
-            table.remove(_cache_keys, i)
-            break
-        end
+    local plain_key = BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, false)
+    local env_key = BuildEnvCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+    -- result 仅在传入时写入（env_only 补算场景 result 为 nil，保留已有普通缓存）
+    if result ~= nil then
+        SetCache(plain_key, result or {})
     end
-    table.insert(_cache_keys, cache_key)
-    if #_cache_keys > CACHE_MAX then
-        local old = table.remove(_cache_keys, 1)
-        _match_cache[old] = nil
+    EnvSetCache(env_key, result_env or {})
+    if combos_map ~= nil and combos_map ~= false and next(combos_map) then
+        ComboMatcher.CacheCombosMap(combos_map, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, complete, has_env)
     end
-    -- 同步写入组合映射缓存（任务完成时由调用方传入 combos_map）
-    if combos_map ~= nil then
-        if combos_map ~= false then
-            if next(combos_map) then
-                ComboMatcher.CacheCombosMap(combos_map, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, complete)
-            end
-        end
+    -- 环境组合映射始终写入（空表也写，表示"当前环境无环境料理组合"，避免误判不完整导致弹窗"计算中"）
+    if env_combos_map ~= nil and env_combos_map ~= false then
+        ComboMatcher.CacheEnvCombosMap(env_combos_map, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, complete)
     end
 end
 
@@ -635,8 +755,12 @@ local MatchTask = Class(function(self)
     self._done = false
     self._result = nil
     self._combos = nil
+    self._result_env = nil
+    self._env_combos = nil
     self._partial_result = nil
     self._partial_combos = nil
+    self._partial_result_env = nil
+    self._partial_env_combos = nil
     self._canceled = false
     self._slice_deadline = 0
 end)
@@ -651,26 +775,36 @@ function MatchTask:Init(cooker, all_items, bag_counts, fixed_counts, cooker_reci
     local self_ = self
     local function make_yield_fn()
         local count = 0
-        return function(current_result, current_combos)
+        return function(current_result, current_combos, current_result_env, current_env_combos)
             count = count + 1
             if count >= YIELD_EVERY then
                 count = 0
                 if os.clock() * 1000 >= self_._slice_deadline then
-                    coroutine.yield(current_result, current_combos)
+                    coroutine.yield(current_result, current_combos, current_result_env, current_env_combos)
                 end
             end
         end
     end
 
+    -- 普通料理已缓存时只补算环境料理（env_only），避免环境变化时重复枚举普通料理
+    local env_only = false
+    if not use_quantity_matching then
+        local plain_key = BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, false)
+        env_only = _match_cache[plain_key] ~= nil
+    end
+    self._env_only = env_only
+
     self._co = coroutine.create(function()
-        local result, combos_map
+        local result, combos_map, result_env, env_combos_map
         if use_quantity_matching then
             result = MatchByQuantity(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts)
         else
-            result, combos_map = MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts, make_yield_fn())
+            result, combos_map, result_env, env_combos_map = MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts, make_yield_fn(), env_only)
         end
         self._result = result
         self._combos = combos_map
+        self._result_env = result_env
+        self._env_combos = env_combos_map
     end)
     return self
 end
@@ -680,13 +814,17 @@ function MatchTask:Step(budget_ms)
         return true
     end
     self._slice_deadline = os.clock() * 1000 + (budget_ms or 3)
-    local ok, partial, partial_combos = coroutine.resume(self._co)
+    local ok, partial, partial_combos, partial_result_env, partial_env_combos = coroutine.resume(self._co)
     if not ok then
         self._done = true
         self._result = nil
         self._combos = nil
+        self._result_env = nil
+        self._env_combos = nil
         self._partial_result = nil
         self._partial_combos = nil
+        self._partial_result_env = nil
+        self._partial_env_combos = nil
         Logger.Logf("[智能锅] 分片匹配协程出错: %s", tostring(partial))
         return true
     end
@@ -696,16 +834,29 @@ function MatchTask:Step(budget_ms)
     if partial_combos ~= nil then
         self._partial_combos = partial_combos
     end
+    if partial_result_env ~= nil then
+        self._partial_result_env = partial_result_env
+    end
+    if partial_env_combos ~= nil then
+        self._partial_env_combos = partial_env_combos
+    end
     if coroutine.status(self._co) == "dead" then
         self._done = true
         self._partial_result = self._result
         self._partial_combos = self._combos
+        self._partial_result_env = self._result_env
+        self._partial_env_combos = self._env_combos
     end
     return self._done
 end
 
 function MatchTask:IsDone()
     return self._done or self._canceled
+end
+
+-- 是否为"仅补算环境料理"任务（普通料理结果已缓存，只重算环境部分）
+function MatchTask:IsEnvOnly()
+    return self._env_only == true
 end
 
 function MatchTask:GetPartialResult()
@@ -722,6 +873,20 @@ function MatchTask:GetPartialCombos()
     return self._partial_combos
 end
 
+function MatchTask:GetPartialResultEnv()
+    if self._canceled or self._partial_result_env == nil then
+        return nil
+    end
+    return next(self._partial_result_env) and self._partial_result_env or nil
+end
+
+function MatchTask:GetPartialEnvCombos()
+    if self._canceled or self._partial_env_combos == nil then
+        return nil
+    end
+    return self._partial_env_combos
+end
+
 function MatchTask:GetResult()
     if self._done and self._result ~= nil then
         return next(self._result) and self._result or nil
@@ -734,6 +899,8 @@ function MatchTask:Cancel()
     self._co = nil
     self._result = nil
     self._combos = nil
+    self._result_env = nil
+    self._env_combos = nil
 end
 
 local MATCH_TASK_TYPE_THRESHOLD = 10
@@ -763,36 +930,58 @@ function ComboMatcher.CreateMatchTask(cooker, all_items, bag_counts, fixed_count
     return task
 end
 
--- ============ 组合→料理映射缓存（供组合路径复用 / 面板打断续算） ============
+-- ============ 组合→料理映射缓存 ============
 
-local function BuildMapKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
-    return BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
-end
-
--- 查询组合映射缓存；返回 { combos = {...}, complete = bool } 或 nil
-function ComboMatcher.GetCachedCombosMap(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+-- 查询组合映射（普通无指纹 + 环境带指纹，合并返回）；还原逻辑无需感知环境差异
+function ComboMatcher.GetCachedCombosMap(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, has_env)
     if not bag_counts or next(bag_counts) == nil then
         return nil
     end
-    local key = BuildMapKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
-    local entry = MapCacheGet(key)
-    return entry
+    local plain_key = BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, false)
+    local env_key = BuildEnvCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+    local plain = MapCacheGet(plain_key)
+    local env = _env_map_cache[env_key]
+    if not plain and not env then
+        return nil
+    end
+    local merged = {}
+    if plain then for k, v in pairs(plain.combos or {}) do merged[k] = v end end
+    if env then for k, v in pairs(env.combos or {}) do merged[k] = v end end
+    -- 普通 + 环境组合映射都完整才算完整；任一 miss（环境变化）返回 false，由上层分片补齐
+    local complete = (plain and plain.complete == true) and (env and env.complete == true)
+    return { combos = merged, complete = complete }
 end
 
--- 写入组合映射缓存；complete 默认 true；仅不可堆叠路径使用（数量匹配无组合枚举）
-function ComboMatcher.CacheCombosMap(combos_map, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, complete)
+-- 写入普通组合映射缓存；complete 默认 true；仅不可堆叠路径使用（数量匹配无组合枚举）
+function ComboMatcher.CacheCombosMap(combos_map, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, complete, has_env)
     if use_quantity_matching or not bag_counts or next(bag_counts) == nil then
         return
     end
     if combos_map == nil or next(combos_map) == nil then
         return
     end
-    local key = BuildMapKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+    local key = BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, false)
     local existing = _combo_map_cache[key]
     if existing and existing.complete then
         return  -- 已有完整结果，不覆盖
     end
     MapCacheSet(key, { combos = combos_map, complete = complete ~= false })
+end
+
+-- 写入环境组合映射缓存（带环境指纹 key）
+function ComboMatcher.CacheEnvCombosMap(env_combos_map, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, complete)
+    if use_quantity_matching or not bag_counts or next(bag_counts) == nil then
+        return
+    end
+    if env_combos_map == nil then
+        return
+    end
+    local key = BuildEnvCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
+    local existing = _env_map_cache[key]
+    if existing and existing.complete then
+        return  -- 已有完整结果，不覆盖
+    end
+    EnvMapCacheSet(key, { combos = env_combos_map, complete = complete ~= false })
 end
 
 -- 从映射缓存还原"能做的料理集合"（每个组合取最高优先级）
