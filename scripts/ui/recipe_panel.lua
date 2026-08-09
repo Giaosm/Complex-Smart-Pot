@@ -683,9 +683,29 @@ function RecipePanel:_RefreshBackpackRecipes()
 	if not same then
 	    if self.data:ShouldUseMatchTask(bag_counts, fixed_counts, self._max_slots, self._use_quantity_matching) then
 	        -- 优先查组合映射缓存：命中即可立即展示（部分或完整），不完整则后台续算
-	        local map_entry = self.data:GetCachedCombosMap(bag_counts, fixed_counts, pot_counts, self._cooker_recipes, self._max_slots, self._use_quantity_matching)
+	        -- 用真实数量(raw)构造 key：放料后背包被裁剪到更小格子数，须用未裁剪总数才能命中空锅缓存
+	        local key_bag = self._cached_bag_counts_raw or bag_counts
+	        local map_entry = self.data:GetCachedCombosMap(key_bag, fixed_counts, pot_counts, self._cooker_recipes, self._max_slots, self._use_quantity_matching)
 	        if map_entry and next(map_entry.combos) then
-	            local set = self.data:GetRecipesFromCombosMap(map_entry)
+	            -- 放料（fixed 非空）时：从组合全集里缩小出"含全部锅里固定料"的组合，再聚合可做料理
+	            local set
+	            if fixed_counts and next(fixed_counts) ~= nil then
+	                local shrunk = {}
+	                for combo_key, matched in pairs(map_entry.combos) do
+	                    local counts = {}
+	                    for prefab in combo_key:gmatch("[^,]+") do
+	                        counts[prefab] = (counts[prefab] or 0) + 1
+	                    end
+	                    local ok = true
+	                    for p, need in pairs(fixed_counts) do
+	                        if (counts[p] or 0) < need then ok = false break end
+	                    end
+	                    if ok then shrunk[combo_key] = matched end
+	                end
+	                set = self.data:GetRecipesFromCombosMap({ combos = shrunk })
+	            else
+	                set = self.data:GetRecipesFromCombosMap(map_entry)
+	            end
 	            self._backpack_recipes = {}
 	            if set then
 	                for k, _ in pairs(set) do
@@ -700,11 +720,11 @@ function RecipePanel:_RefreshBackpackRecipes()
             else
                 -- 部分缓存：先展示已算部分，同时从头重新枚举补齐完整（不接断点）
                 Logger.Logf("[智能锅][缓存] 命中未完成映射缓存，先展示已算部分并重新枚举补齐")
-                self:_StartBackpackMatchTask(bag_counts, fixed_counts, pot_counts)
+                self:_StartBackpackMatchTask(key_bag, fixed_counts, pot_counts)
                 self._match_pending = true
             end
 	        else
-            local cached = self.data:GetCachedMatch(bag_counts, fixed_counts, pot_counts, self._cooker_recipes, self._max_slots, self._use_quantity_matching)
+            local cached = self.data:GetCachedMatch(key_bag, fixed_counts, pot_counts, self._cooker_recipes, self._max_slots, self._use_quantity_matching)
             if cached then
                 self._backpack_recipes = {}  -- 拷贝，避免槽位检查污染缓存表
                 for k, _ in pairs(cached) do
@@ -714,7 +734,7 @@ function RecipePanel:_RefreshBackpackRecipes()
                 self:_CancelBackpackMatchTask()
                 self._match_pending = false
             else
-                self:_StartBackpackMatchTask(bag_counts, fixed_counts, pot_counts)
+                self:_StartBackpackMatchTask(key_bag, fixed_counts, pot_counts)
                 self._match_pending = true
             end
 	        end
@@ -864,8 +884,10 @@ function RecipePanel:_StepBackpackMatchTask()
     local task = self._match_task
     if not task then return end
     if self._backpack_dirty then
-        self:_CancelBackpackMatchTask()  -- 库存已变化，结果作废
+        -- 库存已变化，结果作废：取消旧任务后按新食材重新匹配（命中缓存或启动新分片任务）
+        self:_CancelBackpackMatchTask()
         self._match_pending = false
+        self:_RefreshBackpackRecipes()
         return
     end
     local t0 = os.clock() * 1000
@@ -930,8 +952,13 @@ function RecipePanel:_ApplyBackpackMatchResult(result, combos_map, result_env, e
     self:_SyncComboStatusToPopup()
     if self._match_task_cache_info then
         local info = self._match_task_cache_info
-        -- 任务完成时把完整组合映射写入缓存（标记 complete=true），供组合路径复用
-        self.data:CacheMatch(result, info[1], info[2], info[3], self._cooker_recipes, self._max_slots, self._use_quantity_matching, combos_map, true, nil, result_env, env_combos_map)
+        -- 放料（锅里锁料，fixed 非空）缩小集 = 不全但正确的脏缓存，标记 complete=false：
+        -- 下次开锅命中时知道不完整，复用已有部分并补齐，避免污染空锅全集、也不会白算。
+        local is_fixed = info[2] ~= nil and next(info[2]) ~= nil
+        -- 放料缩小集不写 _match_cache（可做料理集合缓存），避免污染空锅全集；
+        -- 只写 _combo_map_cache（组合映射）并标 complete=false，供下次开锅命中补齐。
+        -- 显示仍用本次算出的 result（内存），不受 CacheMatch 写缓存参数影响。
+        self.data:CacheMatch(is_fixed and nil or result, info[1], info[2], info[3], self._cooker_recipes, self._max_slots, self._use_quantity_matching, combos_map, not is_fixed, nil, is_fixed and nil or result_env, env_combos_map)
         self._match_task_cache_info = nil
     end
     self._backpack_recipes = {}
@@ -941,7 +968,8 @@ function RecipePanel:_ApplyBackpackMatchResult(result, combos_map, result_env, e
             self._backpack_recipes[k] = true
         end
     else
-        local cached = self.data:GetCachedMatch(self._cached_bag_counts, self._cached_fixed_counts or self._cached_pot_counts, self._cached_pot_counts, self._cooker_recipes, self._max_slots, self._use_quantity_matching)
+        -- 用真实数量(raw)查缓存，与主面板 key 一致，避免补算时普通料理缓存 miss
+        local cached = self.data:GetCachedMatch(self._cached_bag_counts_raw or self._cached_bag_counts, self._cached_fixed_counts or self._cached_pot_counts, self._cached_pot_counts, self._cooker_recipes, self._max_slots, self._use_quantity_matching)
         if cached then
             for k, _ in pairs(cached) do
                 self._backpack_recipes[k] = true
@@ -971,12 +999,13 @@ function RecipePanel:_ApplyBackpackMatchResult(result, combos_map, result_env, e
     if self.RefreshDisplay then self:RefreshDisplay() end
 end
 
--- 库存变化时取消分片任务（结果作废，下次刷新重启）；任务推进由 DoTaskInTime 驱动
+-- 库存变化时取消分片任务（结果作废）并按新食材重新匹配，避免"计算中放料后不再计算"卡住
 function RecipePanel:OnUpdate(dt)
     if self._match_task and self._backpack_dirty then
         self:_CancelBackpackMatchTask()
         self._match_step_scheduled = false
         self._match_pending = false
+        self:_RefreshBackpackRecipes()
     end
 end
 
@@ -1202,8 +1231,9 @@ function RecipePanel:_RestoreCombosFromMap(recipe_item)
     local raw_bag_counts = self._cached_bag_counts_raw or bag_counts
 
     -- 匹配缓存 key 用 fixed_counts（锅里占的槽数，每格算1，不含堆叠）
+    -- 用真实数量(raw)查缓存，与主面板一致（放料后背包被裁剪，raw 才能命中同一组合全集）
     local fixed_counts = self._cached_fixed_counts or pot_counts
-    local map_entry = self.data:GetCachedCombosMap(bag_counts, fixed_counts, pot_counts, self._cooker_recipes, self._max_slots, self._use_quantity_matching)
+    local map_entry = self.data:GetCachedCombosMap(raw_bag_counts, fixed_counts, pot_counts, self._cooker_recipes, self._max_slots, self._use_quantity_matching)
     if not map_entry or next(map_entry.combos) == nil then
         return nil
     end
@@ -1222,12 +1252,23 @@ function RecipePanel:_RestoreCombosFromMap(recipe_item)
         if type(matched) == "table" and matched.matched ~= nil then
             matched = matched.matched
         end
+        -- 放料（fixed 非空）缩小：组合必须含全部锅里固定的料
+        local ok_fixed = true
+        if fixed_counts and next(fixed_counts) ~= nil then
+            local cc = {}
+            for prefab in combo_key:gmatch("[^,]+") do
+                cc[prefab] = (cc[prefab] or 0) + 1
+            end
+            for p, need in pairs(fixed_counts) do
+                if (cc[p] or 0) < need then ok_fixed = false break end
+            end
+        end
         -- 计算该组合的最高优先级
         local max_p = nil
         for _, p in pairs(matched) do
             if max_p == nil or p > max_p then max_p = p end
         end
-        if max_p ~= nil and matched[target] ~= nil and max_p == target_priority then
+        if ok_fixed and max_p ~= nil and matched[target] ~= nil and max_p == target_priority then
             -- 还原组合：组合串 "a,b,b" 展开为槽位列表（普通锅每个槽位一个食材，显示独立图标）
             local ingredients = {}
             for prefab in combo_key:gmatch("[^,]+") do
@@ -1283,17 +1324,18 @@ function RecipePanel:GetCraftableCombinations(recipe_item)
     end
 
     -- 不可堆叠设备：从匹配路径的组合映射缓存还原（唯一枚举来源，不为单个料理单独枚举）
+    -- 用真实数量(raw)构造 key，与主面板一致（放料后背包被裁剪到更小格子数，用 raw 才能命中同一缓存）
     local fixed_counts = self._cached_fixed_counts or self._cached_pot_counts
-    local map_entry = self.data:GetCachedCombosMap(self._cached_bag_counts, fixed_counts, self._cached_pot_counts, self._cooker_recipes, self._max_slots, false)
-    if map_entry and map_entry.complete then
-        -- 映射完整（无论组合是否为空）：直接判定结果，不再显示"计算中"
-        -- 组合为空 = 当前材料凑不出这道料理，返回 nil（显示"无组合"）
+    local key_bag = self._cached_bag_counts_raw or self._cached_bag_counts
+    local map_entry = self.data:GetCachedCombosMap(key_bag, fixed_counts, self._cached_pot_counts, self._cooker_recipes, self._max_slots, false)
+    -- 无分片任务在跑(_match_task 为 nil)且有组合数据 = 已算完(含放料缩小集)，直接显示；否则仍在计算中
+    if map_entry and next(map_entry.combos or {}) and not self._match_task then
         self._combo_status = nil
         self:_SyncComboStatusToPopup()
         return self:_RestoreCombosFromMap(recipe_item)
     end
 
-    -- 映射未完整（枚举中）：显示"计算中"，等匹配路径枚举完整后（RefreshDisplay）再还原
+    -- 仍在计算中：显示"计算中"，等枚举完整后（RefreshDisplay）再还原
     if self._combo_status ~= "calculating" then
         self._combo_status = "calculating"
         self:_SyncComboStatusToPopup()

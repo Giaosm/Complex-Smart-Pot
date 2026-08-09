@@ -115,37 +115,33 @@ end
 
 local function BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, has_env)
     local parts = {}
-    table.insert(parts, tostring(max_slots))
-    table.insert(parts, use_quantity_matching and "Q" or "S")
+    -- ①②⑥：设备料理库（cooker_recipes）区分设备，料理库不同则分开缓存。
+    -- 普通锅/便携锅料理库相同则共享；酿酒桶/炼丹炉等料理库不同则分开。
+    -- 不再单独放格子数/匹配模式（它们由料理库与设备共同决定，key 不直接包含）。
+    local names = {}
+    for k, _ in pairs(cooker_recipes or {}) do
+        table.insert(names, k)
+    end
+    table.sort(names)
+    table.insert(parts, "D:" .. table.concat(names, ","))
 
-    -- 数量裁剪：不可堆叠设备（烹饪锅）中，超过槽位上限的食材数量不影响"能否做"（只影响份数），
-    -- 份数由 _RestoreCombosFromMap 用原始 bag_counts 实时计算，因此 key 可裁剪，避免超量食材变化导致缓存 miss。
-    -- 可堆叠设备（数量匹配）不裁剪（其匹配结果与数量直接相关）。
+    -- ③④⑤合并成"总数"（背包 + 锅里真实堆叠数），裁剪到格子数；锅里锁料不再单独区分，
+    -- 放料(背包→锅里搬运)总量守恒 → key 不变 → 命中缓存不重算。
+    -- 锅里的量用 pot_counts（真实堆叠：普通锅每格1、可堆叠锅每格几个算几个），不用 fixed_counts（每格恒为1）。
+    -- 数量裁剪：超过格子数的数量不影响"能否做"（只影响份数），份数由 _RestoreCombosFromMap 用原始数量实时计算。
     local cap = use_quantity_matching and math.huge or (max_slots or 4)
+    local total_counts = {}
+    for k, v in pairs(bag_counts or {}) do total_counts[k] = v end
+    for k, v in pairs(pot_counts or {}) do total_counts[k] = (total_counts[k] or 0) + v end
 
-    local function append_counts(label, counts)
-        local keys = {}
-        for k, v in pairs(counts or {}) do
-            local vv = v
-            if vv > cap then vv = cap end
-            table.insert(keys, k .. "=" .. vv)
-        end
-        table.sort(keys)
-        table.insert(parts, label .. ":" .. table.concat(keys, ","))
+    local keys = {}
+    for k, v in pairs(total_counts) do
+        local vv = v
+        if vv > cap then vv = cap end
+        table.insert(keys, k .. "=" .. vv)
     end
-
-    append_counts("B", bag_counts)
-    append_counts("F", fixed_counts)
-    append_counts("P", pot_counts)
-
-    if cooker_recipes then
-        local names = {}
-        for k, _ in pairs(cooker_recipes) do
-            table.insert(names, k)
-        end
-        table.sort(names)
-        table.insert(parts, "R:" .. table.concat(names, ","))
-    end
+    table.sort(keys)
+    table.insert(parts, "T:" .. table.concat(keys, ","))
 
     -- 环境指纹：仅当当前食材组合可能涉及环境料理时才纳入（避免普通料理缓存随环境变化失效）
     -- has_env 由调用方根据当前食材中是否含环境料理需求的食材类型判断
@@ -478,7 +474,9 @@ local function MatchNonStacked(cooker, all_items, bag_counts, fixed_counts, cook
         seen[p] = true
         table.insert(types, p)
         min_counts[p] = fixed_counts[p] or 0
-        max_counts[p] = math.min((bag_counts[p] or 0) + (fixed_counts[p] or 0), max_slots)
+        -- 可用总数用真实堆叠(pot)计算：普通锅每格1、可堆叠锅每格几个算几个，
+        -- 避免首次枚举时锅里有堆叠被按"每格1"低估，导致 total_avail 误判凑不齐
+        max_counts[p] = math.min((bag_counts[p] or 0) + (pot_counts[p] or 0), max_slots)
     end
 
     for p, _ in pairs(fixed_counts) do
@@ -786,11 +784,13 @@ function MatchTask:Init(cooker, all_items, bag_counts, fixed_counts, cooker_reci
         end
     end
 
-    -- 普通料理已缓存时只补算环境料理（env_only），避免环境变化时重复枚举普通料理
+    -- 普通料理组合映射已完整(complete=true)时才只补算环境料理（env_only），
+    -- 避免"部分结果"（如空锅计算中被放料打断产生的部分缓存）被误判为已完整，导致普通料理不补齐。
     local env_only = false
     if not use_quantity_matching then
         local plain_key = BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, false)
-        env_only = _match_cache[plain_key] ~= nil
+        local map_entry = _combo_map_cache[plain_key]
+        env_only = map_entry ~= nil and map_entry.complete == true
     end
     self._env_only = env_only
 
