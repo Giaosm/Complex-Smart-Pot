@@ -1328,13 +1328,21 @@ function RecipePanel:GetCraftableCombinations(recipe_item)
     local fixed_counts = self._cached_fixed_counts or self._cached_pot_counts
     local key_bag = self._cached_bag_counts_raw or self._cached_bag_counts
     local map_entry = self.data:GetCachedCombosMap(key_bag, fixed_counts, self._cached_pot_counts, self._cooker_recipes, self._max_slots, false)
-    -- 无分片任务在跑(_match_task 为 nil)且有组合数据 = 已算完(含放料缩小集)，直接显示；否则仍在计算中
-    if map_entry and next(map_entry.combos or {}) and not self._match_task then
+    -- 无分片任务在跑(_match_task 为 nil) = 枚举已结束（无论是否有组合），都不应再显示"计算中"；
+    -- 组合映射命中且有数据时直接还原显示；做不出料理(空组合/无缓存)时也清空计算中状态，避免弹窗卡死。
+    if not self._match_task then
         self._combo_status = nil
         self:_SyncComboStatusToPopup()
-        return self:_RestoreCombosFromMap(recipe_item)
+        if map_entry and next(map_entry.combos or {}) then
+            return self:_RestoreCombosFromMap(recipe_item)
+        end
+        return nil
     end
 
+    -- 分片任务仍在运行，且已有部分组合数据可先展示；否则显示"计算中"等待枚举完整
+    if map_entry and next(map_entry.combos or {}) then
+        return self:_RestoreCombosFromMap(recipe_item)
+    end
     -- 仍在计算中：显示"计算中"，等枚举完整后（RefreshDisplay）再还原
     if self._combo_status ~= "calculating" then
         self._combo_status = "calculating"
