@@ -190,6 +190,9 @@ function RecipePopup:ShowForRecipe(data, S, T)
             table.insert(info, tostring(rd.cooktime))
         end
     end
+    if data.thirst ~= nil then
+        table.insert(info, string.format(STRINGS.CSP.POPUP_THIRST_FMT, _round1(data.thirst)))
+    end
     self.info_text:SetString(table.concat(info, " | "))
 
     local buff = rd.oneat_desc

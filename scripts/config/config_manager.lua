@@ -3,7 +3,7 @@
 
 local CSP_SHOW_VIEWPORT_BORDER = false
 local CSP_DEBUG_LOGGING = false
-local CSP_MAX_RENDER_COMBOS = 100
+local CSP_MAX_RENDER_COMBOS = 50
 
 -- 缓存上限常量：供 recipe_matcher / combo_matcher / craftable_combo_generator 统一使用
 local CACHE_MAX = 500
@@ -17,7 +17,8 @@ local DEFAULTS = {
     enable_hof_compat = false,
     enable_myth_compat = false,
     enable_xd_compat = false,
-    max_render_combos = 100,
+    enable_water_compat = false,
+    max_render_combos = 50,
     show_viewport_border = false,
     enable_debug_logging = false,
 }
@@ -67,6 +68,7 @@ function Config.GetSelectMode() return Get("recipe_select_behavior") end
 function Config.IsHofCompat() return Get("enable_hof_compat") == true end
 function Config.IsMythCompat() return Get("enable_myth_compat") == true end
 function Config.IsXdCompat() return Get("enable_xd_compat") == true end
+function Config.IsWaterCompat() return Get("enable_water_compat") == true end
 function Config.IsDebugLogging() return CSP_DEBUG_LOGGING == true end
 function Config.ShowViewportBorder() return CSP_SHOW_VIEWPORT_BORDER == true end
 function Config.GetMaxRenderCombos() return CSP_MAX_RENDER_COMBOS end

@@ -2,7 +2,7 @@
 local isCh = locale and locale:match("^zh")
 
 name = isCh and "复杂智能锅" or "Complex Smart Pot"
-version = "1.1.8.1"
+version = "1.1.8.2"
 author = "哇唧唧哇"
 forumthread = ""
 dont_starve_compatible = false
@@ -15,30 +15,8 @@ icon = "modicon.tex"
 priority = 0
 
 description = isCh
-    and [[打开烹饪锅时显示全部料理图鉴面板，功能如下：
-1. 分类浏览：全部、原版、设备、模组、BUFF、可做 分类
-2. 三维排序：按饱食/生命/理智升降序排列
-3. 食材实时筛选：放入食材自动排除不可能的料理
-4. 配方需求分析：点击料理图标查看食材/标签上下限（再点取消）
-5. 兄弟食材合并：可互换的食材自动合并显示
-6. 可做检测(默认关闭)：根据选中来源检测可制作的料理
-7. 多设备兼容：原版烹饪锅、便携锅、Heap of Foods 酿酒桶、神话书说/登仙炼丹炉等
-8. 自动做饭(默认关闭)：记忆配方、一键多锅烹饪，可调范围(默认30格)；
-   点击图标→添加食材→点击做饭保存配方；
-   右键料理图标或详情面板可直接放入当前设备烹饪；
-   控制台 ClearAutoCookMemory() 清空记忆]]
-	    or [[Displays the full recipe encyclopedia when opening a cookpot, features:
-1. Browse by category: All, Vanilla, Device, Mod, Buffs, Craftable
-2. Sort by Hunger/Health/Sanity ascending/descending
-3. Real-time ingredient filter: auto-excludes impossible recipes as you add
-4. Recipe analysis: click an icon to view ingredient/tag limits (click again to dismiss)
-5. Analog groups: interchangeable ingredients auto-merged
-6. Craft check (off by default): checks craftable recipes from selected source
-7. Multi-device support: cookpot, portable cookpot, Heap of Foods brewer, Myth/Immortal alchemy furnaces, etc.
-8. Auto cook (off by default): recipe memory, one-click multi-pot cooking, adjustable range (default 30);
-   Click icon → add ingredients → click cook to save the recipe;
-   Right-click a recipe icon or use the details panel to cook directly in the current device;
-   Console: ClearAutoCookMemory() to clear all memory]]
+    and [[见创意工坊！！]]
+    or [[See the Steam Workshop!!]]
 
 local function Subtitle(name_cn, name_en)
     return {
@@ -117,7 +95,7 @@ configuration_options = {
         },
         default = "click",
     },
-    Subtitle("模组兼容", "Compat"),
+    Subtitle("模组设备兼容", "Device Compat"),
     {
         name = "enable_hof_compat",
         label = "Heap of Foods",
@@ -151,6 +129,18 @@ configuration_options = {
         },
         default = false,
     },
+    {
+        name = "enable_water_compat",
+        label = isCh and "饥荒：脱水" or "Don't Starve: Dehydrated",
+        hover = isCh and "开启后，兼容饥荒：脱水模组的水壶/酿酒桶等烹饪设备"
+            or "Compatible with Don't Starve: Dehydrated mod's kettle/brewery devices",
+        options = {
+            { description = isCh and "开启" or "On", data = true,
+              hover = isCh and "残次品，不美观，仅能用" or "Rough product, not pretty, barely usable" },
+            { description = isCh and "关闭" or "Off", data = false },
+        },
+        default = false,
+    },
     Subtitle("其他", "Other"),
     {
         name = "max_render_combos",
@@ -159,12 +149,12 @@ configuration_options = {
             or "Max recipe combos to render per dish in craft view\nConsole: SetMaxRenderCombos(0) to adjust (0=all)",
         options = {
             { description = isCh and "全部" or "All", data = 0 },
+            { description = "20", data = 20 },
+            { description = "30", data = 30 },
             { description = "50", data = 50 },
             { description = "100", data = 100 },
-            { description = "200", data = 200 },
-            { description = "500", data = 500 },
         },
-        default = 100,
+        default = 50,
     },
     {
         name = "show_viewport_border",

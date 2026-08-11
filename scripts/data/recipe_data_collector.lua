@@ -62,6 +62,7 @@ local function _BuildRecipeItem(prefab, recipe_def, category, extra)
         health      = recipe_def.health or 0,
         hunger      = recipe_def.hunger or 0,
         sanity      = recipe_def.sanity or 0,
+        thirst      = recipe_def.thirst,
         has_buff    = has_buff,
         defaultsorthash = hash(prefab),
         recipe_requirements = extra.recipe_requirements,
@@ -268,27 +269,75 @@ end
 
 local Collector = {}
 
--- 原版 + 官方"mod"分类食谱
+-- 通用收集：按设备遍历 cooking.recipes，覆盖所有注册的设备配方
 local function CollectVanilla(db)
-    local cookbook_recipes = cooking.cookbook_recipes
-    if cookbook_recipes == nil then
+    local cooker_recipes = cooking.recipes
+    if cooker_recipes == nil then
         return false
     end
 
     local seen = {}
-    for category, recipes in pairs(cookbook_recipes) do
-        _EnsureCategory(db, category)
-        for prefab, recipe_def in pairs(recipes) do
-            if not recipe_def.no_cookbook and not seen[prefab] then
-                seen[prefab] = true
-                local item = _BuildRecipeItem(prefab, recipe_def, category, {
-                    is_vanilla = _vanilla_recipes[prefab] or false,
-                })
-                _BuildRequirements(db, item, recipe_def.test, cooking.ingredients)
-                _InsertItem(db, category, item, false)
+    local device_categories = {}
+    -- 排除登仙可携带香料的配方（量巨大且无用，影响显示）
+    local excluded = {}
+    local spicer_recipes = cooker_recipes["xd_yunxiao_portable_spicer"]
+    if spicer_recipes ~= nil then
+        for prefab in pairs(spicer_recipes) do
+            excluded[prefab] = true
+        end
+    end
+    -- 主收集：按设备遍历 cooking.recipes，配方归入对应设备分类
+    for cooker, recipes in pairs(cooker_recipes) do
+        if cooker ~= "portablespicer" and cooker ~= "xd_yunxiao_portable_spicer" and recipes ~= nil then
+            local cat = cooker
+            device_categories[cat] = true
+            _EnsureCategory(db, cat)
+            for prefab, recipe_def in pairs(recipes) do
+                if not seen[prefab] and not excluded[prefab] then
+                    local item = _BuildRecipeItem(prefab, recipe_def, cat, {
+                        is_vanilla = _vanilla_recipes[prefab] or false,
+                    })
+                    _BuildRequirements(db, item, recipe_def.test, cooking.ingredients)
+                    seen[prefab] = item
+                    _InsertItem(db, cat, item, not item.is_vanilla)
+                end
             end
         end
     end
+
+    -- 补充 cookbook_recipes 的聚合分类（如 "mod"），已被主收集覆盖为设备分类的 category 不再重复处理
+    local cookbook_recipes = cooking.cookbook_recipes
+    if cookbook_recipes ~= nil then
+        for category, recipes in pairs(cookbook_recipes) do
+            local cat = category or "cookpot"
+            if not device_categories[cat] then
+                _EnsureCategory(db, cat)
+                for prefab, recipe_def in pairs(recipes) do
+                    if not recipe_def.no_cookbook and not excluded[prefab] then
+                        if seen[prefab] then
+                            -- 已入 db.all，仅补加聚合分类引用，不重复入 all
+                            local list = db.categories[cat]
+                            local already = false
+                            for _, it in ipairs(list) do
+                                if it == seen[prefab] then already = true break end
+                            end
+                            if not already then
+                                table.insert(list, seen[prefab])
+                            end
+                        else
+                            local item = _BuildRecipeItem(prefab, recipe_def, cat, {
+                                is_vanilla = _vanilla_recipes[prefab] or false,
+                            })
+                            _BuildRequirements(db, item, recipe_def.test, cooking.ingredients)
+                            seen[prefab] = item
+                            _InsertItem(db, cat, item, not item.is_vanilla)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
     return true
 end
 

@@ -38,6 +38,17 @@ local DEVICES = {
             return container.prefab == "xd_liandanlu"
         end,
     },
+    {
+        id = "water",
+        is_brewer = false,
+        config_key = "IsWaterCompat",
+        test = function(container)
+            local prefab = container.prefab
+            -- 蒸馏器(distillers)需走堆叠设备(槽1酒类堆叠≥4)，暂不支持，注释掉
+            return prefab == "kettle" or prefab == "portablekettle"
+                or prefab == "brewery" -- or prefab == "distillers"
+        end,
+    },
 }
 
 local Detector = {}

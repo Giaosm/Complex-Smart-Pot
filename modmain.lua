@@ -24,6 +24,7 @@ Config.Setup({
     enable_hof_compat      = GetModConfigData("enable_hof_compat"),
     enable_myth_compat     = GetModConfigData("enable_myth_compat"),
     enable_xd_compat       = GetModConfigData("enable_xd_compat"),
+    enable_water_compat    = GetModConfigData("enable_water_compat"),
     max_render_combos      = GetModConfigData("max_render_combos"),
     show_viewport_border   = GetModConfigData("show_viewport_border"),
     enable_debug_logging   = GetModConfigData("enable_debug_logging"),
@@ -71,7 +72,7 @@ local function RefreshOnEnvironmentChange()
     PanelManager.ForceRefreshPanels()
 end
 
--- 调试：输出初始化收集到的料理/食材总数（仅调试开关开启时）
+-- 调试：输出初始化收集到的料理/食材总数
 local function DumpInitStats()
     if not Logger.IsEnabled() then return end
     local db = g_cookbook_data
