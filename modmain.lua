@@ -40,6 +40,9 @@ local function LoadLanguage()
     local lang = Config.GetLanguage()
     if lang == "auto" then
         lang = _language_map[_G.LanguageTranslator and _G.LanguageTranslator.defaultlang] or "en"
+    else
+        -- 配置值（如 "zh"）统一走映射，避免与 "cn"/"en" 判断不一致
+        lang = _language_map[lang] or lang
     end
     if lang == "cn" then
         modimport("scripts/language/cn.lua")
