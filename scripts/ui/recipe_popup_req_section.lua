@@ -1,8 +1,8 @@
 -- 需求区域：弹窗中最低/最高需求的滚动区域框架与条目布局
 -- 提供通用滚动区域（root + scissor + content + pool + scrollbar）、需求列表构建与渲染
-local Widget = require("widgets/widget")
-local Image  = require("widgets/image")
-local Text   = require("widgets/text")
+local Widget      = require("widgets/widget")
+local Image       = require("widgets/image")
+local Text        = require("widgets/text")
 
 local AddViewportBorder = require("debug/viewport_border")
 local ResolveInventoryItemAssets = require "utils/resolveinventoryitemassets"
@@ -76,7 +76,24 @@ function ReqSection.Create(popup, name, y_offset, view_h)
     scrollbar:SetPosition(root_x + LAYOUT.REQ_VIEW_W - LAYOUT.REQ_VIEW_PAD_X + 3, y_offset - view_h / 2 + LAYOUT.REQ_VIEW_PAD)
     popup:AddChild(scrollbar)
 
-    return { root = root, content = content, pool = {}, scroll = 0, max_rows = 0, visible_rows = 2, scrollbar = scrollbar, view_h = view_h }
+    -- 兄弟食材聚合悬浮层（默认隐藏；热区用于鼠标停留其上时保持展开）
+    local expand = popup:AddChild(Widget("req_" .. name .. "_expand"))
+    expand.bg = expand:AddChild(Image("images/global.xml", "square.tex"))
+    expand.bg:SetTint(0.18, 0.12, 0.06, 0.85)
+    expand.icons = {}
+    expand.hover = expand:AddChild(Image("images/ui.xml", "blank.tex"))
+    expand.hover:SetTint(0, 0, 0, 0)
+    expand:Hide()
+
+    local section = {
+        root = root, content = content, pool = {}, scroll = 0, max_rows = 0,
+        visible_rows = 2, scrollbar = scrollbar, view_h = view_h,
+        root_x = root_x, y_offset = y_offset, expand = expand,
+        hide_task = nil,
+    }
+    expand.hover:SetOnGainFocus(function() ReqSection.CancelHide(section) end)
+    expand.hover:SetOnLoseFocus(function() ReqSection.ScheduleHide(section) end)
+    return section
 end
 
 function ReqSection.CreatePoolSlot(parent)
@@ -87,6 +104,16 @@ function ReqSection.CreatePoolSlot(parent)
     slot.img = slot:AddChild(Image())
     slot.txt = slot:AddChild(Text(NUMBERFONT, 14))
     slot.txt:SetString("")
+    -- 右下角角标（聚合组成员总数）
+    slot.corner = slot:AddChild(Text(NUMBERFONT, 11))
+    slot.corner:SetString("")
+    slot.corner:Hide()
+    slot.corner:SetHAlign(ANCHOR_MIDDLE)
+    slot.corner:SetVAlign(ANCHOR_MIDDLE)
+    -- 透明悬浮热区（聚合组悬浮展开用）
+    slot.hover = slot:AddChild(Image("images/ui.xml", "blank.tex"))
+    slot.hover:SetTint(0, 0, 0, 0)
+    slot.hover:Hide()
     return slot
 end
 
@@ -97,6 +124,128 @@ function ReqSection.ApplyScroll(section)
     section.scroll = math.clamp(section.scroll, 0, max_scroll)
     section.content:SetPosition(0, section.scroll)
     UpdateScrollbar(section.scrollbar, section.scroll, max_rows, visible_rows)
+    -- 滚动会使聚合图标位移，悬浮层跟随不准确，直接隐藏
+    ReqSection.HideExpand(section)
+end
+
+-- 悬浮层参数：每个成员带格子，格子在背景框内居中，逐格铺设
+local EXPAND_ICON = 24  -- 图标尺寸
+local EXPAND_SLOT = 30  -- 格子尺寸（略大于图标）
+local EXPAND_GAP  = 2   -- 格子间距
+local EXPAND_PAD  = 6   -- 背景内边距
+local EXPAND_MAX_COLS = 10 -- 每行最多列数（列数上限）
+local EXPAND_STEP = EXPAND_SLOT + EXPAND_GAP
+
+-- 立即隐藏悬浮层
+function ReqSection.HideExpand(section)
+    ReqSection.CancelHide(section)
+    section.expand:Hide()
+end
+
+-- 取消待执行的延迟隐藏
+function ReqSection.CancelHide(section)
+    if section.hide_task then
+        section.hide_task:Cancel()
+        section.hide_task = nil
+    end
+end
+
+-- 延迟隐藏：鼠标移向悬浮层过渡期间不关闭；结束仍不在悬浮层内才隐藏
+function ReqSection.ScheduleHide(section)
+    if section.hide_task then return end
+    section.hide_task = section.expand.inst:DoTaskInTime(0.2, function()
+        section.hide_task = nil
+        if not ReqSection.IsMouseInExpand(section) then
+            section.expand:Hide()
+        end
+    end)
+end
+
+-- 鼠标是否在悬浮层背景框内（世界坐标换算）
+function ReqSection.IsMouseInExpand(section)
+    if not section._expand_world then return false end
+    local w, s = section._expand_world, section._expand_scale
+    local mouse = TheInput:GetScreenPosition()
+    local lx = (mouse.x - w.x) / s.x
+    local ly = (mouse.y - w.y) / s.y
+    return math.abs(lx - section._cx) <= section._hw
+        and math.abs(ly - section._cy) <= section._hh
+end
+
+-- 显示聚合悬浮层：定位到聚合槽位上方并填充全部成员格子
+function ReqSection.ShowExpand(section, members, slot_x, slot_y)
+    local expand = section.expand
+    -- 动态布局：从 2 行起找最小行数，使每行不超过 MAX_COLS 列
+    local ncols, nrows
+    for r = 2, #members do
+        local c = math.ceil(#members / r)
+        if c <= EXPAND_MAX_COLS then
+            nrows, ncols = r, c
+            break
+        end
+    end
+    if not nrows then
+        nrows, ncols = #members, 1
+    end
+    local grid_w = (ncols - 1) * EXPAND_STEP
+    local grid_h = (nrows - 1) * EXPAND_STEP
+
+    -- 逐格铺设成员（格子 + 纯 Image 图标）
+    local row, col = 0, 0
+    for i, m in ipairs(members) do
+        local cell = expand.icons[i]
+        if not cell then
+            cell = expand:AddChild(Widget("expand_cell"))
+            cell.bg = cell:AddChild(Image(CRAFTING_ATLAS_RESOLVED, "slot_frame.tex"))
+            cell.bg:ScaleToSize(EXPAND_SLOT, EXPAND_SLOT)
+            cell.bg:MoveToBack()
+            cell.img = cell:AddChild(Image())
+            cell.img:SetOnGainFocus(function() ReqSection.CancelHide(section) end)
+            cell.img:SetOnLoseFocus(function() ReqSection.ScheduleHide(section) end)
+            table.insert(expand.icons, cell)
+        end
+        cell:Show()
+        local tex, atlas, tooltip = ResolveReqAssets(m.key, m.is_tag)
+        cell.img:Show()
+        if atlas then
+            pcall(cell.img.SetTexture, cell.img, atlas, tex)
+        else
+            cell.img:SetTexture("images/food_tags.xml", "unknown.tex")
+        end
+        cell.img:ScaleToSize(EXPAND_ICON, EXPAND_ICON)
+        cell.img:SetTooltip(tooltip)
+        cell:SetPosition(col * EXPAND_STEP, -row * EXPAND_STEP)
+        col = col + 1
+        if col >= ncols then
+            col = 0
+            row = row + 1
+        end
+    end
+    for i = #members + 1, #expand.icons do
+        expand.icons[i]:Hide()
+    end
+
+    -- 背景框居中包裹全部格子
+    local bg_w = ncols * EXPAND_SLOT + (ncols - 1) * EXPAND_GAP + EXPAND_PAD * 2
+    local bg_h = nrows * EXPAND_SLOT + (nrows - 1) * EXPAND_GAP + EXPAND_PAD * 2
+    expand.bg:ScaleToSize(bg_w, bg_h)
+    expand.bg:SetPosition(grid_w / 2, -grid_h / 2)
+    expand.bg:SetTint(0.18, 0.12, 0.06, 0.85)
+
+    -- 定位：水平对齐聚合槽位，整体上移 20px
+    expand:SetPosition(slot_x - grid_w / 2, slot_y + grid_h + 36)
+    -- 悬浮层热区覆盖背景框，鼠标停留其上时保持展开
+    expand.hover:ScaleToSize(bg_w, bg_h)
+    expand.hover:SetPosition(grid_w / 2, -grid_h / 2)
+    expand.hover:Show()
+    -- 记录鼠标位置判断数据（世界坐标 + 背景框局部矩形）
+    section._expand_world = expand:GetWorldPosition()
+    section._expand_scale = expand:GetScale()
+    section._cx, section._cy = grid_w / 2, -grid_h / 2
+    section._hw, section._hh = bg_w / 2, bg_h / 2
+    ReqSection.CancelHide(section)
+    expand:MoveToFront()
+    expand:Show()
 end
 
 -- 由 recipe_requirements 构建最低/最高需求展示列表
@@ -235,6 +384,7 @@ end
 function ReqSection.UpdateEntries(section, reqs)
     local pool = section.pool
     local content = section.content
+    ReqSection.HideExpand(section)
 
     local icon_size = 24
     local spacing   = 26
@@ -242,6 +392,7 @@ function ReqSection.UpdateEntries(section, reqs)
     local row_w   = (max_per_row - 1) * spacing
     local y_step  = -36
 
+    local COLLAPSE_MIN = 8 -- 兄弟成员 >= 8 才聚合显示
     local row_center_base = LAYOUT.POPUP_W / 2 - 15
     local layout = {}
     local cur_row = 0
@@ -249,13 +400,20 @@ function ReqSection.UpdateEntries(section, reqs)
 
     if reqs then
         for _, req in ipairs(reqs) do
-            local need = req.type == "group" and #req.members or 1
+            local collapsed = false
+            local need
+            if req.type == "group" and #req.members >= COLLAPSE_MIN then
+                collapsed = true
+                need = 1
+            else
+                need = req.type == "group" and #req.members or 1
+            end
             if cur_col + need > max_per_row then
                 cur_row = cur_row + 1
                 cur_col = 0
             end
             table.insert(layout, {
-                row = cur_row, col = cur_col, need = need, req = req,
+                row = cur_row, col = cur_col, need = need, req = req, collapsed = collapsed,
             })
             cur_col = cur_col + need
         end
@@ -268,7 +426,20 @@ function ReqSection.UpdateEntries(section, reqs)
         local cx = row_center_base - row_w / 2 + item.col * spacing
         local py = item.row * y_step
 
-        if item.req.type == "group" then
+        if item.req.type == "group" and item.collapsed then
+            -- 聚合显示：占一格，显示第一个成员 + 右下角总数角标 + 下方 ≥N
+            local m = item.req.members[1]
+            local tex, atlas = ResolveReqAssets(m.key, m.is_tag)
+            table.insert(entries, {
+                tex = tex, atlas = atlas,
+                display_amt = item.req.display_amount,
+                corner = #item.req.members,
+                expand_members = item.req.members,
+                x = cx, y = py,
+                bg_w = spacing,
+                bg_h = spacing,
+            })
+        elseif item.req.type == "group" then
             local is_first = true
             for mi, m in ipairs(item.req.members) do
                 local tex, atlas, tooltip = ResolveReqAssets(m.key, m.is_tag)
@@ -320,6 +491,9 @@ function ReqSection.UpdateEntries(section, reqs)
             slot.img:Hide()
             slot.txt:SetPosition(0, 0)
             slot.txt:SetString(entry.text or "")
+            slot.corner:Hide()
+            slot.corner:SetString("")
+            slot.hover:Hide()
         else
             if entry.bg_w and entry.bg_w > 0 then
                 slot.bg:Show()
@@ -336,12 +510,43 @@ function ReqSection.UpdateEntries(section, reqs)
                 if not ok then
                     slot.img:SetTexture("images/food_tags.xml", "unknown.tex")
                 end
-                slot.img:SetTooltip(entry.tooltip)
+                -- 聚合条目不设 tooltip，避免与悬浮热区焦点竞争导致闪烁
+                slot.img:SetTooltip(entry.expand_members and nil or entry.tooltip)
             else
                 slot.img:SetTexture("images/food_tags.xml", "unknown.tex")
             end
             slot.img:ScaleToSize(icon_size, icon_size)
             slot.txt:SetString(entry.display_amt or "")
+
+            -- 角标：聚合组在右下角显示成员总数；普通条目隐藏
+            if entry.corner then
+                slot.corner:Show()
+                slot.corner:SetString(tostring(entry.corner))
+                slot.corner:SetPosition(spacing / 2 - 4, -spacing / 2 + 4)
+                slot.corner:SetColour(1, 1, 1, 1)
+            else
+                slot.corner:Hide()
+                slot.corner:SetString("")
+            end
+
+            -- 悬浮热区：聚合组悬浮时展开全部成员
+            if entry.expand_members then
+                local members = entry.expand_members
+                slot.hover:Show()
+                slot.hover:ScaleToSize(spacing, spacing)
+                slot.hover:SetOnGainFocus(function()
+                    ReqSection.ShowExpand(section, members,
+                        entry.x + section.root_x,
+                        entry.y + section.scroll + section.y_offset)
+                end)
+                slot.hover:SetOnLoseFocus(function()
+                    ReqSection.ScheduleHide(section)
+                end)
+            else
+                slot.hover:Hide()
+                slot.hover:SetOnGainFocus(nil)
+                slot.hover:SetOnLoseFocus(nil)
+            end
         end
     end
     for i = #entries + 1, #pool do
