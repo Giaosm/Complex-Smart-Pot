@@ -263,9 +263,13 @@ function RecipePanel:_BuildRawList()
     end
     if self._category == "device" then
         local raw = {}
+        local seen = {}
         if self._cooker_recipes then
             for _, v in ipairs(self.data.all) do
-                if self._cooker_recipes[v.prefab] then
+                -- 同名 prefab 多设备共存时，只保留当前设备那份（xd_liandanlu / xd_xcdf 丹方不同）
+                if self._cooker_recipes[v.prefab] and not seen[v.prefab]
+                    and (not v.device or v.device == self._cooker) then
+                    seen[v.prefab] = true
                     table.insert(raw, v)
                 end
             end
@@ -295,12 +299,17 @@ function RecipePanel:RefreshDisplay()
     local is_buff = self._category == "buff"
     local is_craftable = self._category == "craftable"
     local filter = self._matching_recipes or self._possible_recipes
+    local seen = {}
     for _, v in ipairs(raw) do
         local valid = true
-        if is_buff and not v.has_buff then
+        -- 同名丹药多设备共存（xd_liandanlu/xd_xcdf）时，只保留当前设备那份
+        if v.device and v.device ~= self._cooker then
             valid = false
         end
-        if is_craftable then
+        if valid and is_buff and not v.has_buff then
+            valid = false
+        end
+        if valid and is_craftable then
             local has_backpack = self._backpack_recipes ~= nil
                 and self._backpack_recipes[v.prefab]
             if not has_backpack then
@@ -309,6 +318,14 @@ function RecipePanel:RefreshDisplay()
         end
         if valid and not is_craftable and filter and not filter[v.prefab] then
             valid = false
+        end
+        -- 可做分类按 prefab 去重（同名丹药只显示一次）
+        if valid and is_craftable then
+            if seen[v.prefab] then
+                valid = false
+            else
+                seen[v.prefab] = true
+            end
         end
         if valid then
             table.insert(items, v)

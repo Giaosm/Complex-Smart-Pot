@@ -423,12 +423,13 @@ function Collector.CollectXd(db)
         return false
     end
 
-    local existing = _BuildExisting(db)
+    -- 按设备内去重：xd_liandanlu 与 xd_xcdf 可能共享同名丹药但丹方不同，不能全局按 prefab 去重
     for device, recipes in pairs(xd_pill_recipes) do
         _EnsureCategory(db, device)
+        local seen = {}
         for prefab, data in pairs(recipes) do
-            if not existing[prefab] and data.recipe then
-                existing[prefab] = true
+            if not seen[prefab] and data.recipe then
+                seen[prefab] = true
 
                 local minnames = {}
                 for ingredient, count in pairs(data.recipe) do
@@ -472,6 +473,7 @@ function Collector.CollectXd(db)
                     has_buff = true,
                     is_vanilla = false,
                 })
+                item.device = device -- 记录来源设备，供设备视图按当前设备筛选同名丹药
                 Analyzer.BuildRequirementsIndex(item)
                 _InsertItem(db, device, item)
             end

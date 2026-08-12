@@ -121,8 +121,8 @@ configuration_options = {
     {
         name = "enable_xd_compat",
         label = isCh and "登仙" or "Deng Xian",
-        hover = isCh and "开启后，兼容登仙模组的炼丹炉烹饪设备"
-            or "Compatible with Deng Xian (Alchemy Furnace)",
+        hover = isCh and "开启后，兼容登仙模组的炼丹炉、星淬丹府烹饪设备"
+            or "Compatible with Deng Xian (Alchemy Furnace & Xingcui Danfu)",
         options = {
             { description = isCh and "开启" or "On", data = true },
             { description = isCh and "关闭" or "Off", data = false },

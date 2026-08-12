@@ -35,7 +35,7 @@ local DEVICES = {
         is_brewer = false,
         config_key = "IsXdCompat",
         test = function(container)
-            return container.prefab == "xd_liandanlu"
+            return container.prefab == "xd_liandanlu" or container.prefab == "xd_xcdf"
         end,
     },
     {
