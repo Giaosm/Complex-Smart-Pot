@@ -2,7 +2,7 @@
 local isCh = locale and locale:match("^zh")
 
 name = isCh and "复杂智能锅" or "Complex Smart Pot"
-version = "1.1.8.3"
+version = "1.1.9"
 author = "哇唧唧哇"
 forumthread = ""
 dont_starve_compatible = false
@@ -142,6 +142,22 @@ configuration_options = {
         default = false,
     },
     Subtitle("其他", "Other"),
+    {
+        name = "enable_ui_drag",
+        label = isCh and "UI拖拽" or "UI Drag",
+        hover = isCh and "重置位置（本地控制台执行）：ResetCSPUiPos()\n联机时请先按Ctrl(Windows)/Control(Mac)切换为本地执行"
+            or "Reset position (run in local console): ResetCSPUiPos()\nIn multiplayer, press Ctrl (Windows) / Control (Mac) to switch to local execution first",
+        options = {
+            { description = isCh and "关闭" or "Off", data = false },
+            {
+                description = isCh and "开启" or "On",
+                data = true,
+                hover = isCh and "检测到棱镜或能力勋章模组已启用时，本功能自动关闭，避免冲突"
+                    or "Auto-disabled when the Prism or Functional Medal mod is enabled to avoid conflicts",
+            },
+        },
+        default = true,
+    },
     {
         name = "max_render_combos",
         label = isCh and "可做配方最大渲染" or "Max Craft View",

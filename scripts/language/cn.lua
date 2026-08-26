@@ -39,3 +39,5 @@ STRINGS.CSP.COMBO_LIMIT_SET     = "复杂智能锅：最大渲染组合数已设
 STRINGS.CSP.POPUP_COOK_BTN      = "烹饪"
 STRINGS.CSP.CALCULATING         = "正在计算可做料理..."
 STRINGS.CSP.COMBO_CALCULATING   = "计算中..."
+STRINGS.CSP.DRAG_TIP            = "右键按住可拖拽"
+STRINGS.CSP.UI_POS_RESET        = "已重置烹饪锅UI位置"

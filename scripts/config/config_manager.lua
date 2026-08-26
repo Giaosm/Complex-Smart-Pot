@@ -21,6 +21,7 @@ local DEFAULTS = {
     max_render_combos = 50,
     show_viewport_border = false,
     enable_debug_logging = false,
+    enable_ui_drag = true,
 }
 
 local Config = { _data = nil }
@@ -70,6 +71,7 @@ function Config.IsMythCompat() return Get("enable_myth_compat") == true end
 function Config.IsXdCompat() return Get("enable_xd_compat") == true end
 function Config.IsWaterCompat() return Get("enable_water_compat") == true end
 function Config.IsDebugLogging() return CSP_DEBUG_LOGGING == true end
+function Config.IsUiDragEnabled() return Get("enable_ui_drag") == true end
 function Config.ShowViewportBorder() return CSP_SHOW_VIEWPORT_BORDER == true end
 function Config.GetMaxRenderCombos() return CSP_MAX_RENDER_COMBOS end
 function Config.GetCacheMax() return CACHE_MAX end

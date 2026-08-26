@@ -28,6 +28,7 @@ Config.Setup({
     max_render_combos      = GetModConfigData("max_render_combos"),
     show_viewport_border   = GetModConfigData("show_viewport_border"),
     enable_debug_logging   = GetModConfigData("enable_debug_logging"),
+    enable_ui_drag         = GetModConfigData("enable_ui_drag"),
 })
 
 -- 语言包须先于任何 UI 模块加载（UI 模块顶层读取 STRINGS.CSP）
@@ -56,9 +57,11 @@ local ContainerDetector = require("container/container_detector")
 local CookbookData = require("data/cookbook_data")
 local PanelManager = require("ui/recipe_panel_manager")
 local Logger = require("debug/logger")
+local ContainerUiDrag = require("ui/container_ui_drag")
 
 local g_cookbook_data = CookbookData()
 PanelManager.Setup(g_cookbook_data)
+ContainerUiDrag.Init(Config, PanelManager, AddClassPostConstruct)
 
 -- 环境变化（季节/月相/节日）时重新收集料理数据并刷新面板
 local _last_env_fingerprint = nil
@@ -108,6 +111,11 @@ _G.SetMaxRenderCombos = function(n)
     print(STRINGS.CSP.COMBO_LIMIT_SET .. tostring(Config.GetMaxRenderCombos()))
 end
 
+-- 控制台命令：重置烹饪锅UI位置（容器UI + 智能锅面板回到默认位置）
+_G.ResetCSPUiPos = function()
+    ContainerUiDrag.ResetPositions()
+end
+
 -- 面板打开期间屏蔽相机缩放（防止误触滚轮改变视角）
 AddClassPostConstruct("cameras/followcamera", function(self)
     local _ZoomIn = self.ZoomIn
@@ -131,6 +139,9 @@ AddClassPostConstruct("screens/playerhud", function(self)
         local device = ContainerDetector.Match(container)
         if device then
             PanelManager.CreatePanel(self, container, device.is_brewer)
+            -- 面板创建后，记录面板相对容器widget的初始偏移（重置位置时恢复用）
+            local cw = self.controls and self.controls.containers and self.controls.containers[container]
+            ContainerUiDrag.RecordPanelOffset(cw)
         else
             PanelManager.BindExtContainer(container)
             PanelManager.NotifyAll()
