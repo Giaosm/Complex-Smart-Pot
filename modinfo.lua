@@ -2,7 +2,7 @@
 local isCh = locale and locale:match("^zh")
 
 name = isCh and "复杂智能锅" or "Complex Smart Pot"
-version = "1.1.9"
+version = "1.2.0.0"
 author = "哇唧唧哇"
 forumthread = ""
 dont_starve_compatible = false
@@ -152,8 +152,8 @@ configuration_options = {
             {
                 description = isCh and "开启" or "On",
                 data = true,
-                hover = isCh and "检测到棱镜或能力勋章模组已启用时，本功能自动关闭，避免冲突"
-                    or "Auto-disabled when the Prism or Functional Medal mod is enabled to avoid conflicts",
+                hover = isCh and "检测到棱镜或能力勋章模组拖拽功能开启时，本功能自动关闭"
+                    or "Auto-disabled when Prism or Functional Medal's container drag is on",
             },
         },
         default = true,

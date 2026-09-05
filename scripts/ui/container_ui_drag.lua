@@ -1,14 +1,12 @@
--- 容器UI可拖拽（参考棱镜 SetUIDragable 思路实现）
--- 拖动原版容器widget，智能锅面板跟随其位置；检测到棱镜/能力勋章时自动跳过；受 enable_ui_drag 开关控制。
+-- 容器UI可拖拽（智能锅面板随容器widget移动）
+-- 棱镜/勋章各有游戏内拖拽开关：对方接管时让位，否则用自己的
 
 local SETTING_SECTION = "complex_smart_pot"
 local SETTING_KEY = "ui_pos"
 
 local ContainerUiDrag = {}
 local _ui_pos_cache = nil
-
--- 由 modmain 注入
-local Config, PanelManager, AddClassPostConstruct = nil, nil, nil
+local Config, PanelManager, AddClassPostConstruct = nil, nil, nil -- modmain 注入
 
 local function LoadUiPos()
     if _ui_pos_cache ~= nil then return _ui_pos_cache end
@@ -25,14 +23,61 @@ local function SaveUiPos()
     end
 end
 
--- 棱镜/能力勋章已提供拖拽？
-local function UiDragConflict()
-    if _G.rawget ~= nil and _G.rawget(_G, "CONFIGS_LEGION") ~= nil then return true end
-    local TUNING = _G.TUNING
-    return TUNING ~= nil and TUNING.FUNCTIONAL_MEDAL_IS_OPEN == true
+-- 容器对应 widget（拖拽键名与勋章容器识别共用）
+local function GetContainerWidget(cw)
+    local rep = cw and cw.container and cw.container.replica and cw.container.replica.container
+    return rep ~= nil and rep.GetWidget ~= nil and rep:GetWidget() or nil
 end
 
--- 清理拖拽监听与状态（Close 与拖动结束时共用）
+-- ===== 冲突判定：true=对方接管拖拽，本模组让位 =====
+-- 勋章在场时棱镜自动让位，故先判勋章。
+-- 勋章开关 MEDAL_CLIENT_DRAG_SWITCH，范围 MEDAL_CONTAINERDRAG_SETTING(0关/1仅勋章容器/2全部)；
+-- 棱镜开关 CONFIGS_LEGION.DRAGABLEUI。
+local _legion_present
+local function IsLegionPresent() -- 加载态会话固定，探测一次
+    if _legion_present == nil then
+        _legion_present = _G.rawget ~= nil and _G.rawget(_G, "CONFIGS_LEGION") ~= nil
+    end
+    return _legion_present
+end
+
+local function IsConflicted(cw)
+    local TUNING = _G.TUNING
+    if TUNING ~= nil and TUNING.FUNCTIONAL_MEDAL_IS_OPEN == true then
+        if TUNING.MEDAL_CLIENT_DRAG_SWITCH ~= true then return false end
+        local setting = TUNING.MEDAL_CONTAINERDRAG_SETTING or 0
+        if setting <= 0 then return false end
+        if setting >= 2 then return true end
+        local widget = GetContainerWidget(cw) -- 仅勋章容器(带 dragtype)
+        return widget ~= nil and widget.dragtype ~= nil
+    end
+    if IsLegionPresent() then
+        local OPTS = _G.CONFIGS_LEGION
+        return OPTS ~= nil and OPTS.DRAGABLEUI == true
+    end
+    return false
+end
+
+-- 开关低频变化而容器高频开关：TTL 复用；设置界面打开时作废缓存
+local _DRAG_SWITCH_TTL = 1
+local _check_time = -math.huge
+local _conflict = false
+
+local function Invalidate()
+    _check_time = -math.huge
+end
+
+local function UiDragConflict(cw)
+    local now = (_G.GetTime ~= nil and _G.GetTime()) or 0
+    if now - _check_time >= 0 and now - _check_time < _DRAG_SWITCH_TTL then
+        return _conflict
+    end
+    _check_time = now
+    _conflict = IsConflicted(cw)
+    return _conflict
+end
+
+-- 拖动状态清理（Close 与拖放结束共用）
 local function ClearDragState(self)
     if self.followhandler ~= nil then
         self.followhandler:Remove()
@@ -46,6 +91,19 @@ end
 function ContainerUiDrag.Init(config, panel_manager, addclasspostconstruct)
     Config, PanelManager, AddClassPostConstruct = config, panel_manager, addclasspostconstruct
 
+    -- 棱镜(OptionsLegion)/勋章(MedalSettingsScreens)设置界面打开即作废缓存：
+    -- 拖拽开关只在这两界面里可改，改完出来首次开容器必重查
+    AddClassPostConstruct("screens/playerhud", function(self)
+        local _OpenScreenUnderPause = self.OpenScreenUnderPause
+        if _OpenScreenUnderPause == nil then return end
+        self.OpenScreenUnderPause = function(self, screen, ...)
+            if screen ~= nil and (screen.name == "OptionsLegion" or screen.name == "MedalSettingsScreens") then
+                Invalidate()
+            end
+            return _OpenScreenUnderPause(self, screen, ...)
+        end
+    end)
+
     AddClassPostConstruct("widgets/containerwidget", function(self)
         local _Close = self.Close
         self.Close = function(self, ...)
@@ -57,31 +115,35 @@ function ContainerUiDrag.Init(config, panel_manager, addclasspostconstruct)
         local _Open = self.Open
         self.Open = function(self, container, doer, ...)
             _Open(self, container, doer, ...)
-            if self.csp_draggable or not Config.IsUiDragEnabled() or UiDragConflict() then return end
+            if self.csp_draggable or not Config.IsUiDragEnabled() or UiDragConflict(self) then return end
 
-            local rep = self.container and self.container.replica and self.container.replica.container
-            if rep == nil or rep.GetWidget == nil then return end
-            local widget = rep:GetWidget()
-            local uikey = widget and widget.dragtype or self.container.prefab
-            if uikey == nil then return end
+            local uikey = self.container.prefab
+            local widget = GetContainerWidget(self)
+            if widget ~= nil and widget.dragtype ~= nil then uikey = widget.dragtype end
 
             self.csp_draggable = true
             if self.csp_base_pos == nil then self.csp_base_pos = self:GetPosition() end
 
-            -- 应用已保存位置
             local saved = LoadUiPos()[uikey]
             if saved then self:SetPosition(saved.x, saved.y, saved.z or 0) end
 
-            -- 背景图接收右键：按下/松开拖动面板
             local drag_offset = 0.6
-            local function BindTarget(uitarget)
+            local tip = STRINGS.CSP.DRAG_TIP or "右键拖拽移动窗口"
+            local function BindTarget(uitarget) -- 右键按住拖动容器
                 if not uitarget then return end
-                uitarget:SetTooltip(STRINGS.CSP.DRAG_TIP or "右键按住可拖拽")
+                -- 棱镜的 Open 链会随后把 tooltip 覆盖成它自己的文案（其开关关闭时该文案被过滤隐藏），
+                -- 延迟一帧重设，保证最终显示的提示是本模组的文案
+                local inst = self.inst
+                if inst ~= nil and inst.DoTaskInTime ~= nil then
+                    inst:DoTaskInTime(0, function() if uitarget.SetTooltip ~= nil then uitarget:SetTooltip(tip) end end)
+                else
+                    uitarget:SetTooltip(tip)
+                end
                 local old_OnControl = uitarget.OnControl
                 uitarget.OnControl = function(sel, control, down, ...)
                     local parent = sel:GetParent()
                     if control == CONTROL_SECONDARY and parent then
-                        if down then parent:l_StartDrag() else parent:l_EndDrag() end
+                        if down then parent:csp_StartDrag() else parent:csp_EndDrag() end
                     end
                     return old_OnControl and old_OnControl(sel, control, down, ...)
                 end
@@ -89,74 +151,68 @@ function ContainerUiDrag.Init(config, panel_manager, addclasspostconstruct)
             BindTarget(self.bgimage)
             BindTarget(self.bganim)
 
-            function self:l_SetDragPosition(x, y, z)
+            -- 方法用 csp_ 前缀命名，避免与棱镜(l_*)/勋章(StartDrag等)的同名拖拽方法互相覆盖
+            function self:csp_SetDragPos(x, y, z)
                 local pos = type(x) == "number" and Vector3(x, y, z) or x
-                local scale = self:GetScale()
-                local newpos = self.p_startpos + (pos - self.m_startpos) / (scale.x / drag_offset)
+                local newpos = self.p_startpos + (pos - self.m_startpos) / (self:GetScale().x / drag_offset)
                 self:SetPosition(newpos)
                 if self.csp_panel and self.csp_panel:IsVisible() then
                     self.csp_panel:SetPosition(newpos + self.csp_panel_offset)
                 end
             end
-            function self:l_StartDrag()
+            function self:csp_StartDrag()
                 if self.followhandler == nil then
                     local mousepos = TheInput:GetScreenPosition()
                     self.m_startpos = mousepos
                     self.p_startpos = self:GetPosition()
-                    -- 记录面板相对偏移，拖动时保持相对位置
                     local panel = PanelManager.GetPanel(self.container)
                     self.csp_panel = panel
                     if panel then self.csp_panel_offset = panel:GetPosition() - self:GetPosition() end
                     self.followhandler = TheInput:AddMoveHandler(function(x, y)
-                        self:l_SetDragPosition(x, y, 0)
-                        if not Input:IsMouseDown(MOUSEBUTTON_RIGHT) then self:l_EndDrag() end
+                        self:csp_SetDragPos(x, y, 0)
+                        if not Input:IsMouseDown(MOUSEBUTTON_RIGHT) then self:csp_EndDrag() end
                     end)
-                    self:l_SetDragPosition(mousepos)
+                    self:csp_SetDragPos(mousepos)
                 end
             end
-            function self:l_EndDrag()
+            function self:csp_EndDrag()
                 ClearDragState(self)
-                local uipos = LoadUiPos()
                 local p = self:GetPosition()
-                uipos[uikey] = { x = p.x, y = p.y, z = p.z }
+                LoadUiPos()[uikey] = { x = p.x, y = p.y, z = p.z }
                 SaveUiPos()
             end
         end
     end)
 end
 
--- 记录面板相对容器widget初始偏移（面板创建后由 modmain 调用）
+-- 记录面板相对容器偏移（modmain 面板创建后调用）
 function ContainerUiDrag.RecordPanelOffset(containerwidget)
     if containerwidget == nil or containerwidget.csp_panel_offset ~= nil then return end
-    local panel = PanelManager and PanelManager.GetPanel(containerwidget.container)
+    local panel = PanelManager.GetPanel(containerwidget.container)
     if panel then
         containerwidget.csp_panel_offset = panel:GetPosition() - containerwidget:GetPosition()
     end
 end
 
--- 重置UI位置：清空缓存并恢复容器widget及其面板到初始位置
+-- 重置UI位置（仅重置未被对方接管的容器）
 function ContainerUiDrag.ResetPositions()
-    if UiDragConflict() then return end
-
     local reset_any = false
     if _ui_pos_cache ~= nil then
         for k in pairs(_ui_pos_cache) do _ui_pos_cache[k] = nil; reset_any = true end
     end
-
     local player = ThePlayer
     if player and player.HUD and player.HUD.controls then
         for _, cw in pairs(player.HUD.controls.containers or {}) do
-            if cw.csp_base_pos ~= nil then
+            if cw.csp_base_pos ~= nil and not UiDragConflict(cw) then
                 cw:SetPosition(cw.csp_base_pos)
                 reset_any = true
                 if cw.csp_panel_offset ~= nil then
-                    local panel = PanelManager and PanelManager.GetPanel(cw.container)
+                    local panel = PanelManager.GetPanel(cw.container)
                     if panel then panel:SetPosition(cw.csp_base_pos + cw.csp_panel_offset) end
                 end
             end
         end
     end
-
     SaveUiPos()
     if reset_any then print(STRINGS.CSP.UI_POS_RESET or "已重置烹饪锅UI位置") end
 end
