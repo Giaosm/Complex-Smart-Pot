@@ -99,8 +99,8 @@ configuration_options = {
     {
         name = "enable_hof_compat",
         label = "Heap of Foods",
-        hover = isCh and "开启后，兼容Heap of Foods模组的酿酒桶(Wooden Keg)和泡菜罐(Preserves Jar)"
-            or "Enable compatibility with Heap of Foods (Wooden Keg & Preserves Jar)",
+        hover = isCh and "开启后，兼容Heap of Foods模组的酿酒桶(Wooden Keg)、泡菜罐(Preserves Jar)和便携酿酒桶(Portable Brewer)"
+            or "Enable compatibility with Heap of Foods (Wooden Keg, Preserves Jar & Portable Brewer)",
         options = {
             { description = isCh and "开启" or "On", data = true },
             { description = isCh and "关闭" or "Off", data = false },

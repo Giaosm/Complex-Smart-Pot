@@ -17,9 +17,9 @@ local DEVICES = {
         is_brewer = true,
         config_key = "IsHofCompat",
         test = function(container)
-            local rep = container.replica and container.replica.container
-            if rep == nil or rep.type ~= "brewer" then return false end
-            return container:HasTag("brewer") and rep:GetNumSlots() == 3
+            local prefab = container.prefab
+            return prefab == "kyno_woodenkeg" or prefab == "kyno_preservesjar"
+                or prefab == "kyno_portablebrewer"  -- or prefab == "kyno_wx78_inventorybrewer"  -- WX78 随身酿酒桶：挂在角色身上的子容器，当前寻设备逻辑搜不到，暂注释
         end,
     },
     {
