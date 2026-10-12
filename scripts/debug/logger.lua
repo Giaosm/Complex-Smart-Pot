@@ -46,17 +46,18 @@ end
 
 -- 环境指纹：季节 + 月相关键阶段 + 活跃节日，用于匹配缓存 key，使环境变化时缓存失效
 -- 月相只区分"满月/新月/其它"：满月或新月触发重收集，普通月相阶段间变化不触发
-function Logger.GetEnvironmentFingerprint()
+-- 月相归一：满月/新月单独区分，其余归为 other（失效粒度见 GetEnvFingerprintForDim 注释）
+local function CurrentMoonKey()
     local moonphase = GetCurrentMoonPhase()
-    local moon_key = "other"
-    if moonphase == "full" then
-        moon_key = "full"
-    elseif moonphase == "new" then
-        moon_key = "new"
-    end
+    if moonphase == "full" then return "full" end
+    if moonphase == "new" then return "new" end
+    return "other"
+end
+
+function Logger.GetEnvironmentFingerprint()
     return table.concat({
         GetCurrentSeason() or "?",
-        moon_key,
+        CurrentMoonKey(),
         table.concat(GetActiveEvents(), ","),
     }, "|")
 end
@@ -68,13 +69,7 @@ end
 --   dim=nil 或其它    → 返回 nil（表示不依赖环境，key 不纳入指纹）
 function Logger.GetEnvFingerprintForDim(dim)
     if dim == nil then return nil end
-    local moonphase = GetCurrentMoonPhase()
-    local moon_key = "other"
-    if moonphase == "full" then
-        moon_key = "full"
-    elseif moonphase == "new" then
-        moon_key = "new"
-    end
+    local moon_key = CurrentMoonKey()
     local season = GetCurrentSeason() or "?"
     if dim == "season" then
         return "E:" .. season

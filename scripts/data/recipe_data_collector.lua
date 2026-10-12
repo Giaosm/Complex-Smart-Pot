@@ -270,6 +270,16 @@ end
 local Collector = {}
 
 -- 通用收集：按设备遍历 cooking.recipes，覆盖所有注册的设备配方
+-- 构建并收录单个料理：设备遍历与 cookbook 聚合分类两条收集路径共用
+local function _CollectRecipeItem(db, seen, cat, prefab, recipe_def)
+    local item = _BuildRecipeItem(prefab, recipe_def, cat, {
+        is_vanilla = _vanilla_recipes[prefab] or false,
+    })
+    _BuildRequirements(db, item, recipe_def.test, cooking.ingredients)
+    seen[prefab] = item
+    _InsertItem(db, cat, item, not item.is_vanilla)
+end
+
 local function CollectVanilla(db)
     local cooker_recipes = cooking.recipes
     if cooker_recipes == nil then
@@ -294,12 +304,7 @@ local function CollectVanilla(db)
             _EnsureCategory(db, cat)
             for prefab, recipe_def in pairs(recipes) do
                 if not seen[prefab] and not excluded[prefab] then
-                    local item = _BuildRecipeItem(prefab, recipe_def, cat, {
-                        is_vanilla = _vanilla_recipes[prefab] or false,
-                    })
-                    _BuildRequirements(db, item, recipe_def.test, cooking.ingredients)
-                    seen[prefab] = item
-                    _InsertItem(db, cat, item, not item.is_vanilla)
+                    _CollectRecipeItem(db, seen, cat, prefab, recipe_def)
                 end
             end
         end
@@ -325,12 +330,7 @@ local function CollectVanilla(db)
                                 table.insert(list, seen[prefab])
                             end
                         else
-                            local item = _BuildRecipeItem(prefab, recipe_def, cat, {
-                                is_vanilla = _vanilla_recipes[prefab] or false,
-                            })
-                            _BuildRequirements(db, item, recipe_def.test, cooking.ingredients)
-                            seen[prefab] = item
-                            _InsertItem(db, cat, item, not item.is_vanilla)
+                            _CollectRecipeItem(db, seen, cat, prefab, recipe_def)
                         end
                     end
                 end

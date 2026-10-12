@@ -331,6 +331,75 @@ local function WaitForHarvestDone(pot, before_state, timeout)
     return false
 end
 
+-- 锅内已有食材必须都能被取回，否则无法清锅重排
+local function CanReworkPot(self, current_container)
+    local slot_data = self._panel._slot_data
+    if slot_data and next(slot_data) then
+        local container = current_container.replica and current_container.replica.container
+        if container then
+            for _, item in pairs(container:GetItems() or {}) do
+                if item and not Mover.CanTakeItem(item) then
+                    return false
+                end
+            end
+        end
+    end
+    return true
+end
+
+-- 交还手持物并关闭当前锅面板，为注册烹饪任务做准备
+local function PrepareToCook(current_container)
+    if Action.HasActiveItem() then
+        Action.ReturnActiveItem()
+    end
+    if current_container then
+        PanelManager.DestroyPanel(current_container)
+    end
+end
+
+-- 前置：任务队列空闲且当前有可操作的锅，否则返回 nil（调用方直接 return false）
+local function AcquireCookContainer(self)
+    if self._task_queue:IsRunning() then
+        return nil
+    end
+    local current_container = self._panel._container
+    if not current_container then
+        return nil
+    end
+    return current_container
+end
+
+-- 设备不支持该料理时提示并返回 false
+local function EnsureRecipeSupported(self, recipe_name)
+    if self._panel._cooker_recipes and not self._panel._cooker_recipes[recipe_name] then
+        Say(STRINGS.CSP.QUICK_WRONG_DEVICE)
+        return false
+    end
+    return true
+end
+
+-- 两个 *WithIngredients 方法共用的校验流水线：设备支持 → 食材展开 → 锅内可取回 → 材料充足。
+-- 任一步不满足返回 nil（提示已给出）。不传 current_container 作排除容器，因为 ingredients
+-- 是完整需求（含锅里已有的），CheckIng 需把锅里已有食材也算入"已有"，否则锅里已放满时会误判材料不足。
+local function PrepareIngredients(self, recipe_name, ingredients, current_container)
+    if not EnsureRecipeSupported(self, recipe_name) then
+        return nil
+    end
+    local flat = NormalizeIngredients(ingredients)
+    if not flat or #flat == 0 then
+        return nil
+    end
+    if not CanReworkPot(self, current_container) then
+        Say(STRINGS.CSP.QUICK_NO_SPACE)
+        return nil
+    end
+    if not Mover.CheckIng(flat, self._auto_cook_source) then
+        Say(STRINGS.CSP.QUICK_NO_INGREDIENTS)
+        return nil
+    end
+    return flat
+end
+
 local function Cook(prefab, data, range, auto_cook_source, target_cont, quiet, preferred_cont)
     if not ThePlayer then
         return Silent()
@@ -646,19 +715,15 @@ function AutoCook:ClearMemory()
 end
 
 function AutoCook:QuickCook(recipe_name)
-    if self._task_queue:IsRunning() then
+    local current_container = AcquireCookContainer(self)
+    if not current_container then
         return false
     end
 
     local max_slots = self._panel._max_slots or 4
     local use_quantity = self._panel._use_quantity_matching == true
-    local current_container = self._panel._container
-    if not current_container then
-        return false
-    end
 
-    if self._panel._cooker_recipes and not self._panel._cooker_recipes[recipe_name] then
-        Say(STRINGS.CSP.QUICK_WRONG_DEVICE)
+    if not EnsureRecipeSupported(self, recipe_name) then
         return false
     end
 
@@ -682,17 +747,9 @@ function AutoCook:QuickCook(recipe_name)
         return false
     end
 
-    local slot_data = self._panel._slot_data
-    if slot_data and next(slot_data) then
-        local container = current_container.replica and current_container.replica.container
-        if container then
-            for _, item in pairs(container:GetItems() or {}) do
-                if item and not Mover.CanTakeItem(item) then
-                    Say(STRINGS.CSP.QUICK_NO_SPACE)
-                    return false
-                end
-            end
-        end
+    if not CanReworkPot(self, current_container) then
+        Say(STRINGS.CSP.QUICK_NO_SPACE)
+        return false
     end
 
     -- 不传 current_container 作排除容器：memory 是完整需求，CheckIng 需把锅里已有食材也算入"已有"
@@ -703,13 +760,7 @@ function AutoCook:QuickCook(recipe_name)
     end
     Logger.Log("[智能锅] QuickCook CheckIng 通过，注册烹饪任务")
 
-    if Action.HasActiveItem() then
-        Action.ReturnActiveItem()
-    end
-
-    if current_container then
-        PanelManager.DestroyPanel(current_container)
-    end
+    PrepareToCook(current_container)
 
     self._task_queue:RegNowTask(
         function()
@@ -721,53 +772,17 @@ function AutoCook:QuickCook(recipe_name)
 end
 
 function AutoCook:QuickCookWithIngredients(recipe_name, ingredients)
-    if self._task_queue:IsRunning() then
-        return false
-    end
-
-    local current_container = self._panel._container
+    local current_container = AcquireCookContainer(self)
     if not current_container then
         return false
     end
 
-    if self._panel._cooker_recipes and not self._panel._cooker_recipes[recipe_name] then
-        Say(STRINGS.CSP.QUICK_WRONG_DEVICE)
+    local flat_ingredients = PrepareIngredients(self, recipe_name, ingredients, current_container)
+    if not flat_ingredients then
         return false
     end
 
-    -- 弹窗可能传入 {prefab=, count=} 的堆叠格式，执行层统一展开为扁平 prefab 列表
-    local flat_ingredients = NormalizeIngredients(ingredients)
-    if not flat_ingredients or #flat_ingredients == 0 then
-        return false
-    end
-
-    local slot_data = self._panel._slot_data
-    if slot_data and next(slot_data) then
-        local container = current_container.replica and current_container.replica.container
-        if container then
-            for _, item in pairs(container:GetItems() or {}) do
-                if item and not Mover.CanTakeItem(item) then
-                    Say(STRINGS.CSP.QUICK_NO_SPACE)
-                    return false
-                end
-            end
-        end
-    end
-
-    -- 注意：不传 current_container 作排除容器。flat_ingredients 是完整需求（含锅里已有的），
-    -- CheckIng 需把锅里已有食材也算入"已有"，否则锅里已放满时会被误判材料不足
-    if not Mover.CheckIng(flat_ingredients, self._auto_cook_source) then
-        Say(STRINGS.CSP.QUICK_NO_INGREDIENTS)
-        return false
-    end
-
-    if Action.HasActiveItem() then
-        Action.ReturnActiveItem()
-    end
-
-    if current_container then
-        PanelManager.DestroyPanel(current_container)
-    end
+    PrepareToCook(current_container)
 
     self:SaveRecipeMemory(recipe_name, flat_ingredients)
 
@@ -783,52 +798,17 @@ end
 -- 普通模式：不保存配方记忆，直接按传入食材烹饪
 -- multi_pot 为 true 时多锅联动（范围固定 10），否则只烹饪当前设备
 function AutoCook:CookWithIngredients(recipe_name, ingredients, multi_pot)
-    if self._task_queue:IsRunning() then
-        return false
-    end
-
-    local current_container = self._panel._container
+    local current_container = AcquireCookContainer(self)
     if not current_container then
         return false
     end
 
-    if self._panel._cooker_recipes and not self._panel._cooker_recipes[recipe_name] then
-        Say(STRINGS.CSP.QUICK_WRONG_DEVICE)
+    local flat_ingredients = PrepareIngredients(self, recipe_name, ingredients, current_container)
+    if not flat_ingredients then
         return false
     end
 
-    local flat_ingredients = NormalizeIngredients(ingredients)
-    if not flat_ingredients or #flat_ingredients == 0 then
-        return false
-    end
-
-    local slot_data = self._panel._slot_data
-    if slot_data and next(slot_data) then
-        local container = current_container.replica and current_container.replica.container
-        if container then
-            for _, item in pairs(container:GetItems() or {}) do
-                if item and not Mover.CanTakeItem(item) then
-                    Say(STRINGS.CSP.QUICK_NO_SPACE)
-                    return false
-                end
-            end
-        end
-    end
-
-    -- 同 QuickCookWithIngredients：flat_ingredients 是完整需求（含锅里已有的），
-    -- CheckIng 不能排除当前锅，否则锅里已放满时会被误判材料不足
-    if not Mover.CheckIng(flat_ingredients, self._auto_cook_source) then
-        Say(STRINGS.CSP.QUICK_NO_INGREDIENTS)
-        return false
-    end
-
-    if Action.HasActiveItem() then
-        Action.ReturnActiveItem()
-    end
-
-    if current_container then
-        PanelManager.DestroyPanel(current_container)
-    end
+    PrepareToCook(current_container)
 
     local range = multi_pot and NORMAL_MODE_RANGE or nil
     local target = nil
@@ -888,13 +868,7 @@ function AutoCook:Execute()
     local data = self._memory.ingredients
     Logger.Log("[智能锅] Execute 检查通过，注册烹饪任务")
 
-    if Action.HasActiveItem() then
-        Action.ReturnActiveItem()
-    end
-
-    if current_container then
-        PanelManager.DestroyPanel(current_container)
-    end
+    PrepareToCook(current_container)
 
     Say(STRINGS.CSP.AUTO_START)
     self._task_queue:RegNowTask(

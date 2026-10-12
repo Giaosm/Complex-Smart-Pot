@@ -45,6 +45,28 @@ local function BuildNamesTags(prefab_list, ingredients)
     return names, tags
 end
 
+-- 汇总某个替代材料组当前已满足的数量
+local function _AnalogGroupTotal(group, resolved)
+    local total = 0
+    for _, gname in ipairs(group.names) do
+        total = total + (resolved[gname] or 0)
+    end
+    return total
+end
+
+-- 收集所有替代材料组的成员名，供最小需求检查跳过这些名字
+local function _BuildGroupCovered(reqs)
+    local covered = {}
+    if reqs.analog_groups then
+        for _, group in ipairs(reqs.analog_groups) do
+            for _, gname in ipairs(group.names) do
+                covered[gname] = true
+            end
+        end
+    end
+    return covered
+end
+
 -- 核心筛选：用排除法检查每个配方，食材必须满足 minnames/mintags，且不超 maxnames/maxtags
 local function _CheckMinRequirements(reqs, resolved, tags, remaining_slots, max_tag_values, ingredients, max_slots)
     max_slots = max_slots or 4
@@ -52,23 +74,13 @@ local function _CheckMinRequirements(reqs, resolved, tags, remaining_slots, max_
         return true
     end
 
-    local group_covered = {}
-    if reqs.analog_groups then
-        for _, group in ipairs(reqs.analog_groups) do
-            for _, gname in ipairs(group.names) do
-                group_covered[gname] = true
-            end
-        end
-    end
+    local group_covered = _BuildGroupCovered(reqs)
 
     local name_deficit = 0
 
     if reqs.analog_groups then
         for _, group in ipairs(reqs.analog_groups) do
-            local group_total = 0
-            for _, gname in ipairs(group.names) do
-                group_total = group_total + (resolved[gname] or 0)
-            end
+            local group_total = _AnalogGroupTotal(group, resolved)
             if group_total < group.amount then
                 name_deficit = name_deficit + (group.amount - group_total)
             end
@@ -113,10 +125,7 @@ local function _CheckMinRequirements(reqs, resolved, tags, remaining_slots, max_
 
             if reqs.analog_groups then
                 for _, group in ipairs(reqs.analog_groups) do
-                    local group_total = 0
-                    for _, gname in ipairs(group.names) do
-                        group_total = group_total + (resolved[gname] or 0)
-                    end
+                    local group_total = _AnalogGroupTotal(group, resolved)
                     local deficit = group.amount - group_total
                     for _ = 1, math.max(0, deficit) do
                         local best_name = nil
@@ -306,10 +315,7 @@ function Matcher.GetPossibleRecipes(db, prefab_list, ingredients, max_slots, max
             end
             if ok and reqs.analog_groups then
                 for _, group in ipairs(reqs.analog_groups) do
-                    local group_total = 0
-                    for _, gname in ipairs(group.names) do
-                        group_total = group_total + (resolved[gname] or 0)
-                    end
+                    local group_total = _AnalogGroupTotal(group, resolved)
                     local group_max = nil
                     for _, gname in ipairs(group.names) do
                         local m = reqs.maxnames and reqs.maxnames[gname]
@@ -382,14 +388,7 @@ function Matcher.GetRecipeMatchScore(reqs, prefab_list, ingredients)
 
     ingredients = ingredients or cooking.ingredients
 
-    local group_covered = {}
-    if reqs.analog_groups then
-        for _, group in ipairs(reqs.analog_groups) do
-            for _, gname in ipairs(group.names) do
-                group_covered[gname] = true
-            end
-        end
-    end
+    local group_covered = _BuildGroupCovered(reqs)
 
     local score = 0
     for _, prefab in ipairs(prefab_list) do

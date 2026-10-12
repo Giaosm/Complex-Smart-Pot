@@ -162,26 +162,26 @@ function Manager.ForceRefreshPanels()
     end
 end
 
+-- 让所有面板标记背包脏并重渲染
+local function _RefreshAllPanels()
+    for _, panel in pairs(Manager._panels) do
+        if panel.MarkBackpackDirty then
+            panel:MarkBackpackDirty()
+            panel:RefreshDisplay()
+        end
+    end
+end
+
 -- 外部容器内容变化时通知所有面板刷新「可做」检测（防抖）
 function Manager.NotifyAll()
     if Manager._notify_debounce_task then return end
     if not ThePlayer then
-        for _, panel in pairs(Manager._panels) do
-            if panel.MarkBackpackDirty then
-                panel:MarkBackpackDirty()
-                panel:RefreshDisplay()
-            end
-        end
+        _RefreshAllPanels()
         return
     end
     Manager._notify_debounce_task = ThePlayer:DoTaskInTime(0.15, function()
         Manager._notify_debounce_task = nil
-        for _, panel in pairs(Manager._panels) do
-            if panel.MarkBackpackDirty then
-                panel:MarkBackpackDirty()
-                panel:RefreshDisplay()
-            end
-        end
+        _RefreshAllPanels()
     end)
 end
 

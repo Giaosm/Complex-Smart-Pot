@@ -18,6 +18,27 @@ local function SafeSetTexture(img, atlas, tex)
     end
 end
 
+-- 打开某道料理的弹窗并触发自动做饭（列表项多处点击逻辑共用）
+local function OpenRecipe(panel, w)
+    local data = w._recipe_data
+    panel._active_popup_data = data
+    panel._recipe_popup:SetPosition(320, 0)
+    panel._recipe_popup:ShowForRecipe(data, panel._S, panel._T)
+    if panel._enable_auto_cook and panel._on_dish_click then
+        panel._on_dish_click(data.prefab)
+        panel.scroll_list:RefreshView()
+    end
+end
+
+-- 关闭当前弹窗并清空选中
+local function CloseRecipe(panel)
+    panel._recipe_popup:Hide()
+    panel._active_popup_data = nil
+    if panel._on_dish_click then
+        panel._on_dish_click(nil)
+    end
+end
+
 local function Create(panel)
     local scissor_x = -L.LIST_WIDTH / 2
     local scissor_y = -L.PANEL_HEIGHT / 2
@@ -60,24 +81,14 @@ local function Create(panel)
                     hover:SetOnGainFocus(function()
                         if w._recipe_data then
                             if not (panel._active_popup_data and panel._active_popup_data.prefab == w._recipe_data.prefab) then
-                                panel._active_popup_data = w._recipe_data
-                                panel._recipe_popup:SetPosition(320, 0)
-                                panel._recipe_popup:ShowForRecipe(w._recipe_data, panel._S, panel._T)
-                                if panel._enable_auto_cook and panel._on_dish_click then
-                                    panel._on_dish_click(w._recipe_data.prefab)
-                                    panel.scroll_list:RefreshView()
-                                end
+                                OpenRecipe(panel, w)
                             end
                         end
                     end)
                     hover:SetOnClick(function()
                         if w._recipe_data then
                             if panel._active_popup_data and panel._active_popup_data.prefab == w._recipe_data.prefab then
-                                panel._recipe_popup:Hide()
-                                panel._active_popup_data = nil
-                                if panel._on_dish_click then
-                                    panel._on_dish_click(nil)
-                                end
+                                CloseRecipe(panel)
                             end
                         end
                     end)
@@ -85,19 +96,9 @@ local function Create(panel)
                     hover:SetOnClick(function()
                         if w._recipe_data then
                             if panel._active_popup_data and panel._active_popup_data.prefab == w._recipe_data.prefab then
-                                panel._recipe_popup:Hide()
-                                panel._active_popup_data = nil
-                                if panel._on_dish_click then
-                                    panel._on_dish_click(nil)
-                                end
+                                CloseRecipe(panel)
                             else
-                                panel._active_popup_data = w._recipe_data
-                                panel._recipe_popup:SetPosition(320, 0)
-                                panel._recipe_popup:ShowForRecipe(w._recipe_data, panel._S, panel._T)
-                                if panel._enable_auto_cook and panel._on_dish_click then
-                                    panel._on_dish_click(w._recipe_data.prefab)
-                                    panel.scroll_list:RefreshView()
-                                end
+                                OpenRecipe(panel, w)
                             end
                         end
                     end)

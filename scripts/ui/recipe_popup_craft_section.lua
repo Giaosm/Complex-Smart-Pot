@@ -1,5 +1,4 @@
 -- 可做配方区域：弹窗中"可做配方"视图，列出每种可做组合（食材图标 + 份数 + 烹饪按钮）
-local Widget      = require("widgets/widget")
 local ImageButton = require("widgets/imagebutton")
 local Text        = require("widgets/text")
 

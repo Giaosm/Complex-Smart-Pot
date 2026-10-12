@@ -12,6 +12,21 @@ local function ptest(test, names, tags)
     return res and 1 or 0
 end
 
+-- 二分收敛：通过 setter 在 [lo, hi] 内逼近 test 恰好通过的最小值，返回该值
+local function BinarySearchMin(setter, test, vnp, vtp, lo, hi)
+    while hi - lo > 0.001 do
+        local mid = (lo + hi) / 2
+        setter(mid)
+        if ptest(test, vnp, vtp) == 1 then
+            hi = mid
+        else
+            lo = mid
+        end
+    end
+    setter(hi)
+    return hi
+end
+
 local function RawToSimple(names, tags)
     local recipe = { minnames = {}, mintags = {}, maxnames = {}, maxtags = {} }
     for name, amount in pairs(names) do
@@ -221,36 +236,18 @@ local function MinimizeRecipe(test, simple, allnames, alltags, names, tags, name
             vtags[tag] = amount - _DTAG
             if ptest(test, vnp, vtp) ~= 1 then
                 local lo, hi = amount - _DTAG, amount
-                while hi - lo > 0.001 do
-                    local mid = (lo + hi) / 2
-                    vtags[tag] = mid
-                    if ptest(test, vnp, vtp) == 1 then
-                        hi = mid
-                    else
-                        lo = mid
-                    end
-                end
-                vtags[tag] = hi
-                simple.mintags[tag] = hi
+                local function set_v(m) vtags[tag] = m end
+                simple.mintags[tag] = BinarySearchMin(set_v, test, vnp, vtp, lo, hi)
                 resolve_tag_display(simple, tag, test, vnp, vtp, vtags)
             else
                 vtags[tag] = _DTAG
                 while ptest(test, vnp, vtp) ~= 1 and vtags[tag] < 1001 do
                     vtags[tag] = vtags[tag] + _DTAG
                 end
-                simple.mintags[tag] = vtags[tag]
-                local lo, hi = vtags[tag] - _DTAG, vtags[tag]
-                while hi - lo > 0.001 do
-                    local mid = (lo + hi) / 2
-                    vtags[tag] = mid
-                    if ptest(test, vnp, vtp) == 1 then
-                        hi = mid
-                    else
-                        lo = mid
-                    end
-                end
-                vtags[tag] = hi
-                simple.mintags[tag] = hi
+                local base = vtags[tag]
+                simple.mintags[tag] = base
+                local function set_v(m) vtags[tag] = m end
+                simple.mintags[tag] = BinarySearchMin(set_v, test, vnp, vtp, base - _DTAG, base)
                 resolve_tag_display(simple, tag, test, vnp, vtp, vtags)
             end
         end

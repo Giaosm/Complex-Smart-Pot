@@ -703,11 +703,14 @@ function ComboMatcher.Match(cooker, all_items, bag_counts, fixed_counts, cooker_
     return result
 end
 
+-- 空背包无需匹配/缓存（多个缓存入口共用判据）
+local function _BagEmpty(bag_counts)
+    return not bag_counts or next(bag_counts) == nil
+end
+
 -- 分片路径的缓存读写（与同步 Match 共用同一 _match_cache + LRU）
 function ComboMatcher.GetCachedMatch(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, has_env)
-    if not bag_counts or next(bag_counts) == nil then
-        return nil
-    end
+    if _BagEmpty(bag_counts) then return nil end
     -- 普通 + 环境都命中才合并返回；任一 miss（如环境变化）返回 nil，由上层补算
     local plain_key = BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, false)
     local env_key = BuildEnvCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
@@ -723,7 +726,7 @@ function ComboMatcher.GetCachedMatch(bag_counts, fixed_counts, pot_counts, cooke
 end
 
 function ComboMatcher.CacheMatch(result, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, combos_map, complete, has_env, result_env, env_combos_map)
-    if not bag_counts or next(bag_counts) == nil then
+    if _BagEmpty(bag_counts) then
         return
     end
     local plain_key = BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, false)
@@ -748,9 +751,8 @@ ComboMatcher.CheckRecipeByCounts = CheckRecipeByCounts
 -- Step(budget_ms)/IsDone/GetResult/Cancel
 local YIELD_EVERY = 64
 
-local MatchTask = Class(function(self)
-    self._co = nil
-    self._done = false
+-- 清空分片任务的结果字段（构造与协程出错路径共用）
+local function _ResetTaskResults(self)
     self._result = nil
     self._combos = nil
     self._result_env = nil
@@ -759,6 +761,12 @@ local MatchTask = Class(function(self)
     self._partial_combos = nil
     self._partial_result_env = nil
     self._partial_env_combos = nil
+end
+
+local MatchTask = Class(function(self)
+    self._co = nil
+    self._done = false
+    _ResetTaskResults(self)
     self._canceled = false
     self._slice_deadline = 0
 end)
@@ -817,14 +825,7 @@ function MatchTask:Step(budget_ms)
     local ok, partial, partial_combos, partial_result_env, partial_env_combos = coroutine.resume(self._co)
     if not ok then
         self._done = true
-        self._result = nil
-        self._combos = nil
-        self._result_env = nil
-        self._env_combos = nil
-        self._partial_result = nil
-        self._partial_combos = nil
-        self._partial_result_env = nil
-        self._partial_env_combos = nil
+        _ResetTaskResults(self)
         Logger.Logf("[智能锅] 分片匹配协程出错: %s", tostring(partial))
         return true
     end
@@ -934,9 +935,7 @@ end
 
 -- 查询组合映射（普通无指纹 + 环境带指纹，合并返回）；还原逻辑无需感知环境差异
 function ComboMatcher.GetCachedCombosMap(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, has_env)
-    if not bag_counts or next(bag_counts) == nil then
-        return nil
-    end
+    if _BagEmpty(bag_counts) then return nil end
     local plain_key = BuildCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, false)
     local env_key = BuildEnvCacheKey(bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching)
     local plain = MapCacheGet(plain_key)
@@ -954,7 +953,7 @@ end
 
 -- 写入普通组合映射缓存；complete 默认 true；仅不可堆叠路径使用（数量匹配无组合枚举）
 function ComboMatcher.CacheCombosMap(combos_map, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, complete, has_env)
-    if use_quantity_matching or not bag_counts or next(bag_counts) == nil then
+    if use_quantity_matching or _BagEmpty(bag_counts) then
         return
     end
     if combos_map == nil or next(combos_map) == nil then
@@ -970,7 +969,7 @@ end
 
 -- 写入环境组合映射缓存（带环境指纹 key）
 function ComboMatcher.CacheEnvCombosMap(env_combos_map, bag_counts, fixed_counts, pot_counts, cooker_recipes, max_slots, use_quantity_matching, complete)
-    if use_quantity_matching or not bag_counts or next(bag_counts) == nil then
+    if use_quantity_matching or _BagEmpty(bag_counts) then
         return
     end
     if env_combos_map == nil then
