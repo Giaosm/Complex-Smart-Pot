@@ -158,7 +158,7 @@ function PotPreviewBar:UpdateSlots(ingredients, use_quantity)
             icon:SetTexture(atlas, tex)
             icon:SetTint(1, 1, 1, 1)
             if data.count > 1 then
-                count_label:SetString("*" .. data.count)
+                count_label:SetString("×" .. data.count)
                 count_label:SetColour(0.9, 0.9, 0.2, 1)
                 count_label:Show()
             else

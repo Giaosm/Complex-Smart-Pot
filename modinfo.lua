@@ -2,7 +2,7 @@
 local isCh = locale and locale:match("^zh")
 
 name = isCh and "复杂智能锅" or "Complex Smart Pot"
-version = "1.2.2.0"
+version = "1.2.2.1"
 author = "哇唧唧哇"
 forumthread = ""
 dont_starve_compatible = false
@@ -44,8 +44,8 @@ configuration_options = {
     {
         name = "enable_auto_cook",
         label = isCh and "自动做饭" or "Auto Cook",
-        hover = isCh and "开启后，烹饪锅面板增加「自动做饭」按钮，一键自动烹饪+收料理\n决定从哪些来源拿取食材，优先级：已打开的容器>背包>物品栏"
-            or "Adds Auto Cook button to the cookpot panel for one-click cooking\nIngredient source priority: open containers > backpack > inventory",
+        hover = isCh and "决定从哪些来源拿取食材，优先级：已打开的容器>背包>物品栏"
+            or "Ingredient source priority: open containers > backpack > inventory",
         options = {
             { description = isCh and "关闭" or "Off", data = "off", hover = isCh and "关闭后右键点击料理的快捷烹饪也同时关闭" or "Also disables right-click quick cook" },
             { description = isCh and "物品栏" or "Inv", data = "inv", hover = isCh and "只从物品栏拿取" or "player inventory only" },
@@ -63,8 +63,8 @@ configuration_options = {
             or "Only takes effect when Auto Cook is enabled; this option is ignored while it is off",
         options = {
             { description = isCh and "普通模式" or "Normal", data = "normal",
-              hover = isCh and "需搭配“可做检测”使用，左击自动放入食材烹饪，右击多锅联动自动烹饪，具体使用请看工坊视频"
-                or "Requires Craft Check. Left-click to auto-fill ingredients and cook; right-click for multi-pot auto-cooking. See the Workshop video for details." },
+              hover = isCh and "需搭配“可做检测”使用才能自动做饭，左击单锅，右击多锅联动，具体使用请看工坊视频"
+                or "Requires Craft Check for auto-cooking. Left-click: single pot; right-click: multi-pot. See the Workshop video for details." },
             { description = isCh and "记忆模式" or "Memory", data = "memory",
               hover = isCh and "首次烹饪后保存配方，预览条切换多组记忆，一键自动补食材做饭"
                 or "Saves recipe after first cook, preview bar switches memory slots, one-click auto-fill" },
@@ -74,8 +74,8 @@ configuration_options = {
     {
         name = "enable_backpack_check",
         label = isCh and "可做检测" or "Craft Check",
-        hover = isCh and "检测食材来源，决定「可做」分类显示哪些料理\n注意：检测的地方越多性能要求越大，慎重选择！"
-            or "Ingredient source for Craftable tab\nNote: more sources = more CPU, choose wisely!",
+        hover = isCh and "检测食材来源，决定「可做」分类显示哪些料理\n注意：检测到可入当前设备食材的种类越多，计算时间越长，慎重选择！"
+            or "Ingredient source for Craftable tab\nNote: the more usable ingredient types detected, the longer the calculation; choose wisely!",
         options = {
             { description = isCh and "关闭" or "Off", data = "off" },
             { description = isCh and "物品栏" or "Inv", data = "inv", hover = isCh and "只检测物品栏" or "player inventory" },

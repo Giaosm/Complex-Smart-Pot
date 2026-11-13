@@ -123,7 +123,7 @@ function CraftSection.Update(popup, section, recipe_item)
             -- 堆叠数量显示在图标下方，格式同需求视图的上下限
             if entry.count > 1 then
                 slot.txt:SetPosition(0, -icon_size / 2)
-                slot.txt:SetString("*" .. entry.count)
+                slot.txt:SetString("×" .. entry.count)
                 slot.txt:SetColour(0.9, 0.9, 0.2, 1)
             else
                 slot.txt:SetPosition(0, 0)
@@ -164,25 +164,31 @@ function CraftSection.Update(popup, section, recipe_item)
         btn:SetText(STRINGS.CSP.POPUP_COOK_BTN)
         btn:ForceImageSize(50, 20)
         btn:SetPosition(col_start_x + n * spacing + 46, py)
-        local captured_combo = combo
+        -- 按钮在 section.btns 里复用：当前组合存到按钮上，OnControl 只包一次，
+        -- 否则每次刷新组合列表都会叠一层闭包
+        btn.csp_combo = combo
         btn:SetOnClick(function()
-            if popup._cook_fn and popup._current_recipe_data then
-                popup._cook_fn(popup._current_recipe_data.prefab, captured_combo.ingredients, false)
+            if popup._cook_fn and popup._current_recipe_data and btn.csp_combo then
+                popup._cook_fn(popup._current_recipe_data.prefab, btn.csp_combo.ingredients, false)
             end
         end)
-        local base_on_control = btn.OnControl
-        btn.OnControl = function(self_btn, control, down)
-            if control == CONTROL_SECONDARY and not down then
-                Logger.Logf("[智能锅] 烹饪按钮右键被触发")
-                if popup._cook_fn and popup._current_recipe_data then
-                    popup._cook_fn(popup._current_recipe_data.prefab, captured_combo.ingredients, true)
-                else
-                    Logger.Logf("[智能锅] 烹饪按钮右键无回调: cook_fn=%s recipe=%s",
-                        tostring(popup._cook_fn ~= nil), tostring(popup._current_recipe_data ~= nil))
+        if not btn.csp_right_bound then
+            btn.csp_right_bound = true
+            local base_on_control = btn.OnControl
+            btn.OnControl = function(self_btn, control, down)
+                if control == CONTROL_SECONDARY and not down then
+                    Logger.Logf("[智能锅] 烹饪按钮右键被触发")
+                    if popup._cook_fn and popup._current_recipe_data and self_btn.csp_combo then
+                        popup._cook_fn(popup._current_recipe_data.prefab, self_btn.csp_combo.ingredients, true)
+                    else
+                        Logger.Logf("[智能锅] 烹饪按钮右键无回调: cook_fn=%s recipe=%s combo=%s",
+                            tostring(popup._cook_fn ~= nil), tostring(popup._current_recipe_data ~= nil),
+                            tostring(self_btn.csp_combo ~= nil))
+                    end
+                    return true
                 end
-                return true
+                return base_on_control(self_btn, control, down)
             end
-            return base_on_control(self_btn, control, down)
         end
     end
 
