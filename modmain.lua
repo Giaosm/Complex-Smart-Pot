@@ -25,6 +25,7 @@ Config.Setup({
     enable_myth_compat     = GetModConfigData("enable_myth_compat"),
     enable_xd_compat       = GetModConfigData("enable_xd_compat"),
     enable_water_compat    = GetModConfigData("enable_water_compat"),
+    enable_lj_compat       = GetModConfigData("enable_lj_compat"),
     max_render_combos      = GetModConfigData("max_render_combos"),
     show_viewport_border   = GetModConfigData("show_viewport_border"),
     enable_debug_logging   = GetModConfigData("enable_debug_logging"),
@@ -87,7 +88,28 @@ local function DumpInitStats()
     print("[智能锅] 初始化完成: 料理共" .. #db.all .. "种, 食材材料共" .. ing_count .. "种")
 end
 
+-- 控制台命令：每次进入世界重新绑定，避免切换世界后仍指向旧模块实例
+-- strict 模式下函数体内不能直接给 _G 赋新键（只允许 main chunk），必须走 rawset
+local function InstallConsoleCommands()
+    rawset(GLOBAL, "ClearAutoCookMemory", function()
+        PanelManager.ClearAllAutoCookMemory()
+        print(STRINGS.CSP.MEMORY_CLEARED)
+    end)
+
+    -- 设置「可做配方」最大渲染组合数
+    rawset(GLOBAL, "SetMaxRenderCombos", function(n)
+        Config.SetMaxRenderCombos(n)
+        print(STRINGS.CSP.COMBO_LIMIT_SET .. tostring(Config.GetMaxRenderCombos()))
+    end)
+
+    -- 重置烹饪锅UI位置（容器UI + 智能锅面板回到默认位置）
+    rawset(GLOBAL, "ResetCSPUiPos", function()
+        ContainerUiDrag.ResetPositions()
+    end)
+end
+
 AddSimPostInit(function()
+    InstallConsoleCommands()
     g_cookbook_data:Collect()
     _last_env_fingerprint = Logger.GetEnvironmentFingerprint()
     DumpInitStats()
@@ -98,23 +120,6 @@ AddSimPostInit(function()
         TheWorld:ListenForEvent("moonphasechanged2", RefreshOnEnvironmentChange)
     end
 end)
-
--- 控制台命令
-_G.ClearAutoCookMemory = function()
-    PanelManager.ClearAllAutoCookMemory()
-    print(STRINGS.CSP.MEMORY_CLEARED)
-end
-
--- 控制台命令：设置「可做配方」最大渲染组合数
-_G.SetMaxRenderCombos = function(n)
-    Config.SetMaxRenderCombos(n)
-    print(STRINGS.CSP.COMBO_LIMIT_SET .. tostring(Config.GetMaxRenderCombos()))
-end
-
--- 控制台命令：重置烹饪锅UI位置（容器UI + 智能锅面板回到默认位置）
-_G.ResetCSPUiPos = function()
-    ContainerUiDrag.ResetPositions()
-end
 
 -- 面板打开期间屏蔽相机缩放（防止误触滚轮改变视角）
 AddClassPostConstruct("cameras/followcamera", function(self)

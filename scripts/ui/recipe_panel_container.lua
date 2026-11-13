@@ -196,12 +196,15 @@ function RecipePanel:OnSlotChanged()
     local prefabs = {}
     local counts = {}
     for slot_idx, prefab in pairs(self._slot_data) do
-        table.insert(prefabs, prefab)
-        local item = self._container and self._container.replica
-            and self._container.replica.container
-            and self._container.replica.container:GetItemInSlot(slot_idx)
-        local stack_size = item and GetStackSize(item) or 1
-        counts[prefab] = (counts[prefab] or 0) + stack_size
+        -- 只统计原料格：灵界炼丹炉第 5 格为异火燃料，不参与配方
+        if slot_idx <= self._max_slots then
+            table.insert(prefabs, prefab)
+            local item = self._container and self._container.replica
+                and self._container.replica.container
+                and self._container.replica.container:GetItemInSlot(slot_idx)
+            local stack_size = item and GetStackSize(item) or 1
+            counts[prefab] = (counts[prefab] or 0) + stack_size
+        end
     end
     self._cached_pot_counts = counts
     self._backpack_dirty = true

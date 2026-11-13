@@ -412,7 +412,13 @@ local function Cook(prefab, data, range, auto_cook_source, target_cont, quiet, p
         return Silent()
     end
 
+    -- 灵界炼丹炉自动做饭只做备料：不支持多锅联动，限定单台设备
+    local is_lj_furnace = prefab == "lj_alchemy_furnace"
+
     local conts = target_cont and {target_cont} or CookerFinder.FindEnts(prefab, range, preferred_cont)
+    if is_lj_furnace and #conts > 1 then
+        conts = { conts[1] }
+    end
     Logger.Logf("[智能锅] Cook: 找到设备数=%d range=%s target=%s", #conts, tostring(range), tostring(target_cont ~= nil))
     if not conts[1] then
         Logger.Log("[智能锅] Cook 退出: 未找到设备")
@@ -458,6 +464,13 @@ local function Cook(prefab, data, range, auto_cook_source, target_cont, quiet, p
                         return Silent()
                     end
                     Logger.Log("[智能锅] Cook SyncPotContents 成功")
+
+                    if is_lj_furnace then
+                        -- 炼丹炉到这一步就结束：不点开炉、不放异火、不收丹，均由玩家操作
+                        Logger.Log("[智能锅] 炼丹炉备料完成，结束任务")
+                        Say(STRINGS.CSP.LJ_FILLED)
+                        return true
+                    end
 
                     if not WaitForContainerReady(cont, data) then
                         if attempt < MAX_COOK_ATTEMPTS then
@@ -810,6 +823,10 @@ function AutoCook:CookWithIngredients(recipe_name, ingredients, multi_pot)
 
     PrepareToCook(current_container)
 
+    -- 灵界炼丹炉只备料，不支持多锅联动
+    if current_container.prefab == "lj_alchemy_furnace" then
+        multi_pot = false
+    end
     local range = multi_pot and NORMAL_MODE_RANGE or nil
     local target = nil
     if not multi_pot then
@@ -866,16 +883,23 @@ function AutoCook:Execute()
 
     local prefab = current_container.prefab
     local data = self._memory.ingredients
+    -- 灵界炼丹炉只备料：单台设备，不播报自动烹饪开始/终止
+    local is_lj_furnace = prefab == "lj_alchemy_furnace"
     Logger.Log("[智能锅] Execute 检查通过，注册烹饪任务")
 
     PrepareToCook(current_container)
 
-    Say(STRINGS.CSP.AUTO_START)
+    if not is_lj_furnace then
+        Say(STRINGS.CSP.AUTO_START)
+    end
     self._task_queue:RegNowTask(
         function()
+            if is_lj_furnace then
+                return Cook(prefab, data, nil, self._auto_cook_source, current_container, nil, current_container)
+            end
             return Cook(prefab, data, self._range_search, self._auto_cook_source, nil, nil, current_container)
         end,
-        function()
+        is_lj_furnace and nil or function()
             Say(STRINGS.CSP.AUTO_STOP)
         end
     )

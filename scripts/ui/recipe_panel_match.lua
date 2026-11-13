@@ -32,8 +32,11 @@ function RecipePanel:_RefreshBackpackRecipes()
 
     local pot_counts = self._cached_pot_counts or {}
     local occupied_slots = 0
-    for _ in pairs(self._slot_data) do
-        occupied_slots = occupied_slots + 1
+    for slot_idx in pairs(self._slot_data) do
+        -- 只统计原料格（灵界炼丹炉第 5 格为燃料）
+        if slot_idx <= self._max_slots then
+            occupied_slots = occupied_slots + 1
+        end
     end
 
     if occupied_slots >= self._max_slots then
@@ -67,8 +70,10 @@ function RecipePanel:_RefreshBackpackRecipes()
     end
 
     local fixed_counts = {}
-    for _, prefab in pairs(self._slot_data) do
-        fixed_counts[prefab] = (fixed_counts[prefab] or 0) + 1
+    for slot_idx, prefab in pairs(self._slot_data) do
+        if slot_idx <= self._max_slots then
+            fixed_counts[prefab] = (fixed_counts[prefab] or 0) + 1
+        end
     end
     self._cached_fixed_counts = fixed_counts  -- 缓存按槽的固定食材数，供组合映射查询用
 

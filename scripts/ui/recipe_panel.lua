@@ -107,8 +107,8 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
 
     self:SetScale(2 / 3, 2 / 3, 2 / 3)
 
+    -- 按钮列要等 SetCooker 确定设备类型后再建（炼丹炉才有「关闭」按钮），见 SetCooker 末尾
     self.btn_root = self:AddChild(Widget("btn_root"))
-    self:MakeButtons()
 
     self.scroll_list = self:AddChild(RecipeList.Create(self))
     self.scroll_list:SetPosition(L.LIST_X, 0)
@@ -182,6 +182,8 @@ local RecipePanel = Class(Widget, function(self, cookbook_data, env, player_inst
         return self:GetCraftableCombinations(recipe_item)
     end, function(recipe_name, ingredients, multi_pot)
         if not self._auto_cook then return end
+        -- 炼丹炉不支持多锅联动：弹窗按钮右击视为无效
+        if self._lj_mode and multi_pot then return end
         if self._auto_cook_mode == "memory" then
             self._auto_cook:QuickCookWithIngredients(recipe_name, ingredients)
         else
@@ -195,7 +197,7 @@ end)
 
 function RecipePanel:MakeButtons()
     local entries = {}
-    if self._enable_auto_cook and self._auto_cook_mode == "memory" then
+    if self._enable_auto_cook and self._auto_cook_mode == "memory" and not self._lj_mode then
         table.insert(entries, { kind = "auto", label = STRINGS.CSP.BTN_AUTO_COOK })
     end
     for _, cfg in ipairs(CATEGORIES) do
@@ -206,8 +208,12 @@ function RecipePanel:MakeButtons()
     if self._backpack_check_mode ~= "off" then
         table.insert(entries, { kind = "cat", id = "craftable", label = STRINGS.CSP.CATEGORY_CRAFTABLE })
     end
+    -- 炼丹炉：灵界自带的容器界面会被本面板挡住一格，追加「关闭」按钮收起本面板
+    if self._lj_mode then
+        table.insert(entries, { kind = "close", label = STRINGS.CSP.BTN_CLOSE })
+    end
 
-    -- 按钮列整体竖直居中：分类（含自动做饭）在上、排序在下
+    -- 按钮列整体竖直居中：分类（含自动做饭、关闭）在上、排序在下
     local total = #entries + #SortButtons.SORTERS
     local start_y = (L.BTN_H + L.BTN_GAP) * (total - 1) / 2
 
@@ -225,6 +231,9 @@ function RecipePanel:MakeButtons()
         on_auto_cook = function()
             self._auto_cook:Execute()
         end,
+        on_close = function()
+            self:RequestClose()
+        end,
     }))
 
     self._sort_buttons = self.btn_root:AddChild(SortButtons({
@@ -240,6 +249,13 @@ function RecipePanel:MakeButtons()
             self:RefreshDisplay()
         end,
     }))
+end
+
+-- 收起本面板：只销毁模组面板，容器界面保持打开（回调由面板管理器注入）
+function RecipePanel:RequestClose()
+    if self._on_request_close then
+        self._on_request_close()
+    end
 end
 
 function RecipePanel:_BuildRawList()
@@ -299,11 +315,37 @@ function RecipePanel:RefreshDisplay()
     local is_buff = self._category == "buff"
     local is_craftable = self._category == "craftable"
     local filter = self._matching_recipes or self._possible_recipes
+
+    -- 总览分类（全部/模组/BUFF）展示所有设备的料理，不受当前设备限制：
+    -- 当前设备做不了的由列表按 _cooker_recipes 显示为锁定图标。
+    -- 同名多设备丹方（xd_liandanlu / xd_xcdf）只留一条，优先当前设备那份。
+    local show_all_devices = self._category == "all"
+        or self._category == "mod"
+        or self._category == "buff"
+    if show_all_devices then
+        local best = {}
+        local order = {}
+        for _, v in ipairs(raw) do
+            local cur = best[v.prefab]
+            if cur == nil then
+                best[v.prefab] = v
+                table.insert(order, v.prefab)
+            elseif cur.device ~= self._cooker and v.device == self._cooker then
+                best[v.prefab] = v
+            end
+        end
+        local deduped = {}
+        for _, prefab in ipairs(order) do
+            table.insert(deduped, best[prefab])
+        end
+        raw = deduped
+    end
+
     local seen = {}
     for _, v in ipairs(raw) do
         local valid = true
-        -- 同名丹药多设备共存（xd_liandanlu/xd_xcdf）时，只保留当前设备那份
-        if v.device and v.device ~= self._cooker then
+        -- 设备相关分类：同名丹药多设备共存时，只保留当前设备那份
+        if not show_all_devices and v.device and v.device ~= self._cooker then
             valid = false
         end
         if valid and is_buff and not v.has_buff then
@@ -441,6 +483,10 @@ function RecipePanel:SetAcceptsStacksFromContainer(container)
             end
         end
         self._max_slots = num_slots
+        -- 灵界炼丹炉共 5 格，但第 5 格只收异火燃料，参与配方的原料格固定 4 个
+        if container.prefab == "lj_alchemy_furnace" then
+            self._max_slots = 4
+        end
 
         if rep.AcceptsStacks then
             self._accepts_stacks = rep:AcceptsStacks()
@@ -489,6 +535,8 @@ function RecipePanel:SetCooker(cooker_prefab, is_brewer)
     self._cached_bag_counts = nil
     self._cached_bag_counts_raw = nil
 
+    self._lj_mode = nil
+
     if self._is_brewer then
         self._max_slots = 3
         local hof_brewing = _G.package.loaded["hof_brewing"]
@@ -509,7 +557,28 @@ function RecipePanel:SetCooker(cooker_prefab, is_brewer)
         self._brewer_recipes = nil
         if cooker_prefab ~= nil then
             self._cooker_recipes = cooking.recipes[cooker_prefab] or {}
-            if cooker_prefab == "alchmy_fur" then
+            if cooker_prefab == "lj_alchemy_furnace" then
+                -- 灵界炼丹炉：配方不在 cooking.recipes 里，由数据层从灵界 mod 数据转换
+                self._lj_mode = true
+                self.data:EnsureCollected(cooker_prefab)
+                self._cooker_recipes = self.data:GetLjRecipeMap()
+                -- 原料槽 1~4；第 5 格是异火燃料，不参与配料，故格子数固定 4
+                self._max_slots = 4
+                self._lj_ingredients = {}
+                for _, recipe_def in pairs(self._cooker_recipes) do
+                    for ingredient in pairs(recipe_def.recipe or {}) do
+                        self._lj_ingredients[ingredient] = true
+                    end
+                    if recipe_def.alternative_recipe then
+                        for _, alt_group in ipairs(recipe_def.alternative_recipe) do
+                            for ingredient in pairs(alt_group) do
+                                self._lj_ingredients[ingredient] = true
+                            end
+                        end
+                    end
+                end
+                self._cached_device_ingredients = self._lj_ingredients
+            elseif cooker_prefab == "alchmy_fur" then
                 if next(self._cooker_recipes) == nil and TUNING and TUNING.MYTH_PILL_RECIPES then
                     self._cooker_recipes = TUNING.MYTH_PILL_RECIPES
                 end
@@ -548,6 +617,7 @@ function RecipePanel:SetCooker(cooker_prefab, is_brewer)
                 self._cached_device_ingredients = self._xd_ingredients
             else
                 self._myth_ingredients = nil
+                self._lj_ingredients = nil
                 self._cached_device_ingredients = {}
                 for k, v in pairs(cooking.ingredients) do
                     self._cached_device_ingredients[k] = v
@@ -559,6 +629,7 @@ function RecipePanel:SetCooker(cooker_prefab, is_brewer)
         else
             self._cooker_recipes = nil
             self._myth_ingredients = nil
+            self._lj_ingredients = nil
             self._cached_device_ingredients = nil
         end
     end
@@ -577,6 +648,11 @@ function RecipePanel:SetCooker(cooker_prefab, is_brewer)
         end)
         self._cached_sorted_defs = sorted
     end
+    -- 设备类型此时才确定：按钮列统一在此构建
+    -- （炼丹炉隐藏「自动做饭」多锅联动入口，并追加「关闭」按钮）
+    self.btn_root:KillAllChildren()
+    self:MakeButtons()
+
     self._cached_raw_key = nil
     self:RefreshDisplay()
 end

@@ -39,6 +39,14 @@ local DEVICES = {
         end,
     },
     {
+        id = "lj",
+        is_brewer = false,
+        config_key = "IsLjCompat",
+        test = function(container)
+            return container.prefab == "lj_alchemy_furnace"
+        end,
+    },
+    {
         id = "water",
         is_brewer = false,
         config_key = "IsWaterCompat",
@@ -78,5 +86,6 @@ function Detector.IsCookpot(container) return IsType(container, "cookpot") end
 function Detector.IsBrewer(container)  return IsType(container, "brewer") end
 function Detector.IsMyth(container)    return IsType(container, "myth") end
 function Detector.IsXd(container)      return IsType(container, "xd") end
+function Detector.IsLj(container)      return IsType(container, "lj") end
 
 return Detector

@@ -59,22 +59,25 @@ local function IsConflicted(cw)
 end
 
 -- 开关低频变化而容器高频开关：TTL 复用；设置界面打开时作废缓存
+-- 勋章开关对「容器是否带 dragtype」敏感，结果必须按容器缓存，不能共用一个值
 local _DRAG_SWITCH_TTL = 1
-local _check_time = -math.huge
-local _conflict = false
+local _conflict_cache = {}
 
 local function Invalidate()
-    _check_time = -math.huge
+    _conflict_cache = {}
 end
 
 local function UiDragConflict(cw)
     local now = (_G.GetTime ~= nil and _G.GetTime()) or 0
-    if now - _check_time >= 0 and now - _check_time < _DRAG_SWITCH_TTL then
-        return _conflict
+    local entry = cw ~= nil and _conflict_cache[cw] or nil
+    if entry ~= nil and now - entry.t >= 0 and now - entry.t < _DRAG_SWITCH_TTL then
+        return entry.v
     end
-    _check_time = now
-    _conflict = IsConflicted(cw)
-    return _conflict
+    local conflict = IsConflicted(cw)
+    if cw ~= nil then
+        _conflict_cache[cw] = { t = now, v = conflict }
+    end
+    return conflict
 end
 
 -- 拖动状态清理（Close 与拖放结束共用）
@@ -139,6 +142,9 @@ function ContainerUiDrag.Init(config, panel_manager, addclasspostconstruct)
                 else
                     uitarget:SetTooltip(tip)
                 end
+                -- 容器 widget 是复用的：OnControl 只包一次，否则每次开关容器都会叠一层闭包
+                if uitarget.csp_drag_bound then return end
+                uitarget.csp_drag_bound = true
                 local old_OnControl = uitarget.OnControl
                 uitarget.OnControl = function(sel, control, down, ...)
                     local parent = sel:GetParent()

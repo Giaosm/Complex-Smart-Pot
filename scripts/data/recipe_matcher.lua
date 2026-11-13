@@ -54,6 +54,23 @@ local function _AnalogGroupTotal(group, resolved)
     return total
 end
 
+-- 配方是否声明了该材料（固定材料或替代组内的材料），用于严格配料设备
+local function _IsDeclaredIngredient(reqs, name)
+    if reqs.minnames and reqs.minnames[name] then
+        return true
+    end
+    if reqs.analog_groups then
+        for _, group in ipairs(reqs.analog_groups) do
+            for _, gname in ipairs(group.names) do
+                if gname == name then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
 -- 收集所有替代材料组的成员名，供最小需求检查跳过这些名字
 local function _BuildGroupCovered(reqs)
     local covered = {}
@@ -446,6 +463,14 @@ function Matcher.GetMatchingRecipes(db, cooker, prefab_list, ingredients, counts
                         group_total = group_total + have
                     end
                     if group_total < group.amount then
+                        ok = false
+                        break
+                    end
+                end
+            end
+            if ok and item.recipe_requirements.exact_ingredients then
+                for name in pairs(names) do
+                    if not _IsDeclaredIngredient(item.recipe_requirements, name) then
                         ok = false
                         break
                     end

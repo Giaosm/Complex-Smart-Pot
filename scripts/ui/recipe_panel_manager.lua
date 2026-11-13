@@ -2,6 +2,7 @@
 local RecipePanel = require("ui/recipe_panel")
 local Config = require("config/config_manager")
 local MemoryStore = require("auto_cook/recipe_memory")
+local GetStackSize = require("utils/getstacksize")
 
 local Manager = {
     _panels = {},                 -- container ent -> RecipePanel
@@ -36,17 +37,32 @@ local function WrapCookButtonOnce(btn)
             local c = ent.replica.container
             local prefab_data = {}
             local has_empty_slot
-            for i = 1, c:GetNumSlots() do
+            -- 只收集原料格：灵界炼丹炉第 5 格是异火燃料，写进记忆会污染配方
+            local num_slots = c:GetNumSlots()
+            local max_slots = panel._max_slots or num_slots
+            if max_slots < num_slots then
+                num_slots = max_slots
+            end
+            -- 灵界炼丹炉按数量配料、不要求填满原料格；其余设备仍要求放满全部槽位
+            local need_full = ent.prefab ~= "lj_alchemy_furnace"
+            for i = 1, num_slots do
                 local item = c:GetItemInSlot(i)
                 local p = item and item.prefab
                 if p then
-                    table.insert(prefab_data, p)
+                    -- 堆叠设备（炼丹炉等）一格可能放多个，必须按实际堆叠数量记录，
+                    -- 否则记忆回放时只会填 1 个
+                    local stack = GetStackSize(item)
+                    for _ = 1, stack do
+                        table.insert(prefab_data, p)
+                    end
                 else
                     has_empty_slot = true
-                    break
+                    if need_full then
+                        break
+                    end
                 end
             end
-            if not has_empty_slot then
+            if (not need_full and #prefab_data > 0) or (need_full and not has_empty_slot) then
                 if panel._auto_cook_mode == "memory" and panel._pending_recipe_name then
                     if panel._auto_cook and panel._cooker_recipes and panel._cooker_recipes[panel._pending_recipe_name] then
                         panel._auto_cook:SaveRecipeMemory(panel._pending_recipe_name, prefab_data)
@@ -93,6 +109,10 @@ function Manager.CreatePanel(hud, container, is_brewer)
     local pos = containerwidget:GetPosition()
     panel:SetPosition(pos.x + 100, pos.y)
     panel:SetCooker(container.prefab, is_brewer)
+    -- 面板上的「关闭」按钮：只销毁本面板，容器界面保持打开（炼丹炉会挡住容器一格）
+    panel._on_request_close = function()
+        Manager.DestroyPanel(container)
+    end
     panel:SetAcceptsStacksFromContainer(container)
     panel:StartMonitor(container)
 

@@ -15,8 +15,10 @@ icon = "modicon.tex"
 priority = 0
 
 description = isCh
-    and [[见创意工坊！！]]
-    or [[See the Steam Workshop!!]]
+    and [[1、记忆模式下，料理图标可以右击
+2、料理名字后面的那个“圈”可以点击；开启“可做检测”后，里面的“烹饪”按钮可以左击/右击]]
+    or [[1. In Memory mode, dish icons can be right-clicked
+2. The circle after a dish name is clickable; with Craft Check on, the Cook button inside can be left/right-clicked]]
 
 local function Subtitle(name_cn, name_en)
     return {
@@ -52,7 +54,7 @@ configuration_options = {
             { description = isCh and "冰箱+盐盒" or "Fridge+Salt", data = "fridge", hover = isCh and "从冰箱和盐盒拿取" or "icebox + saltbox" },
             { description = isCh and "冰箱+盐盒+物品栏" or "Fridge+Salt+Inv", data = "fridge_and_inv", hover = isCh and "从冰箱、盐盒和物品栏拿取" or "icebox + saltbox + inventory" },
         },
-        default = "off",
+        default = "all",
     },
     {
         name = "auto_cook_mode",
@@ -61,13 +63,13 @@ configuration_options = {
             or "Only takes effect when Auto Cook is enabled; this option is ignored while it is off",
         options = {
             { description = isCh and "普通模式" or "Normal", data = "normal",
-              hover = isCh and "左击「可做配方」列表中的烹饪按钮自动做饭，右击该按钮10格多锅联动"
-                or "Left-click the Cook button in the Craftable list to auto-cook, right-click for 10-range multi-pot" },
+              hover = isCh and "需搭配“可做检测”使用，左击自动放入食材烹饪，右击多锅联动自动烹饪，具体使用请看工坊视频"
+                or "Requires Craft Check. Left-click to auto-fill ingredients and cook; right-click for multi-pot auto-cooking. See the Workshop video for details." },
             { description = isCh and "记忆模式" or "Memory", data = "memory",
               hover = isCh and "首次烹饪后保存配方，预览条切换多组记忆，一键自动补食材做饭"
                 or "Saves recipe after first cook, preview bar switches memory slots, one-click auto-fill" },
         },
-        default = "normal",
+        default = "memory",
     },
     {
         name = "enable_backpack_check",
@@ -130,6 +132,17 @@ configuration_options = {
         default = false,
     },
     {
+        name = "enable_lj_compat",
+        label = isCh and "灵界" or "Ethereal Realm",
+        hover = isCh and "开启后兼容灵界模组的炼丹炉：显示丹方与需求，可一键填充原料（不自动放异火、不自动开炉）"
+            or "Compatible with Ethereal Realm (Alchemy Furnace): shows recipes and requirements, one-click ingredient fill (no flame, no auto-start)",
+        options = {
+            { description = isCh and "开启" or "On", data = true },
+            { description = isCh and "关闭" or "Off", data = false },
+        },
+        default = false,
+    },
+    {
         name = "enable_water_compat",
         label = isCh and "饥荒：脱水" or "Don't Starve: Dehydrated",
         hover = isCh and "开启后，兼容饥荒：脱水模组的水壶/酿酒桶等烹饪设备"
@@ -170,7 +183,7 @@ configuration_options = {
             { description = "50", data = 50 },
             { description = "100", data = 100 },
         },
-        default = 50,
+        default = 20,
     },
     {
         name = "show_viewport_border",

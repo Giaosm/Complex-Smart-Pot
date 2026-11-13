@@ -50,9 +50,16 @@ end
 function CookbookData:EnsureCollected(device)
     if device == "alchmy_fur" then
         Collector.EnsureMyth(self)
+    elseif device == "lj_alchemy_furnace" then
+        Collector.CollectLj(self)
     else
         Collector.CollectXd(self)
     end
+end
+
+-- 灵界炼丹炉配方映射（prefab -> recipe_def），由收集器在 CollectLj 时填充
+function CookbookData:GetLjRecipeMap()
+    return self._lj_recipes or {}
 end
 
 -- 兼容旧调用（UI 直接调用私有收集方法的历史接口）

@@ -1,4 +1,4 @@
--- 分类按钮列：可选的「自动做饭」按钮 + 分类按钮（全部/原版/设备/模组/BUFF/可做）
+-- 分类按钮列：可选的「自动做饭」「关闭」按钮 + 分类按钮（全部/原版/设备/模组/BUFF/可做）
 -- 与排序按钮共用同一条竖向按钮列，起始 y 由面板统一计算后传入
 local Widget = require("widgets/widget")
 local ImageButton = require("widgets/imagebutton")
@@ -7,11 +7,12 @@ local L = require("ui/panel_layout")
 local CategoryButtons = Class(Widget, function(self, opts)
     Widget._ctor(self, "CategoryButtons")
     -- opts = {
-    --   entries   = { { kind = "auto"|"cat", id =, label = }, ... },
+    --   entries   = { { kind = "auto"|"cat"|"close", id =, label = }, ... },
     --   current   = 当前分类 id,
     --   start_y   = 第一个按钮的 y 坐标,
     --   on_select = fn(id),   -- 分类点击
     --   on_auto_cook = fn(),  -- 自动做饭点击
+    --   on_close  = fn(),     -- 关闭点击
     -- }
     self._on_select = opts.on_select
     self._cat_btns = {}
@@ -34,6 +35,10 @@ local CategoryButtons = Class(Widget, function(self, opts)
             local id = entry.id
             btn:SetOnClick(function() self._on_select(id) end)
             table.insert(self._cat_btns, { btn = btn, id = id })
+        elseif entry.kind == "close" then
+            if opts.on_close then
+                btn:SetOnClick(opts.on_close)
+            end
         else
             self._auto_cook_btn = btn
             btn:Disable()

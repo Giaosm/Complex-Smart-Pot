@@ -289,6 +289,23 @@ local function CheckRecipeByCounts(item, names, tags, counts, ingredients)
     return true
 end
 
+-- 配方是否声明了该材料（固定材料或替代组内的材料）
+local function IsDeclaredIngredient(reqs, name)
+    if reqs.minnames and reqs.minnames[name] then
+        return true
+    end
+    if reqs.analog_groups then
+        for _, group in ipairs(reqs.analog_groups) do
+            for _, gname in ipairs(group.names) do
+                if gname == name then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
 -- 数量向量匹配：用于可堆叠设备（单 slot 可放多份同种食材），判断能否从 bag+pot 满足 min 且不超 max
 local function MatchByQuantity(cooker, all_items, bag_counts, fixed_counts, cooker_recipes, max_slots, ingredients, ingredient_aliases, pot_counts)
     local pot_counts_combined = {}
@@ -393,6 +410,15 @@ local function MatchByQuantity(cooker, all_items, bag_counts, fixed_counts, cook
                                 ok = false
                                 break
                             end
+                        end
+                    end
+                end
+
+                if ok and reqs.exact_ingredients then
+                    for name, count in pairs(pot_counts_combined) do
+                        if count > 0 and not IsDeclaredIngredient(reqs, name) then
+                            ok = false
+                            break
                         end
                     end
                 end

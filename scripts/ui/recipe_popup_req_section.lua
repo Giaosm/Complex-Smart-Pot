@@ -256,6 +256,31 @@ function ReqSection.BuildReqLists(reqs)
         return min_reqs, max_reqs
     end
 
+    -- 燃料位（灵界炼丹炉第 5 格）：按替代组渲染（任意一种异火均可），
+    -- 成员数达到聚合阈值时自动合并为一格并带总数角标；只做展示，不参与原料数量判定
+    if reqs.fuel then
+        local fuel_members = {}
+        for _, fname in ipairs(reqs.fuel.prefabs or {}) do
+            table.insert(fuel_members, { key = fname, is_tag = false })
+        end
+        if #fuel_members > 0 then
+            table.insert(min_reqs, 1, {
+                type = "group",
+                members = fuel_members,
+                amount = reqs.fuel.count or 1,
+                display_amount = "×" .. (reqs.fuel.count or 1),
+            })
+        elseif reqs.fuel.prefab then
+            table.insert(min_reqs, 1, {
+                type = "name",
+                key = reqs.fuel.prefab,
+                is_tag = false,
+                amount = reqs.fuel.count or 1,
+                display_amount = "×" .. (reqs.fuel.count or 1),
+            })
+        end
+    end
+
     local group_covered = {}
     if reqs.analog_groups then
         for _, group in ipairs(reqs.analog_groups) do
@@ -468,7 +493,7 @@ function ReqSection.UpdateEntries(section, reqs)
         else
             local tex, atlas, tooltip = ResolveReqAssets(item.req.key, item.req.is_tag)
             table.insert(entries, {
-                tex = tex, atlas = atlas, tooltip = tooltip,
+                tex = tex, atlas = atlas, tooltip = item.req.tooltip or tooltip,
                 display_amt = item.req.display_amount,
                 x = cx, y = py,
                 bg_w = spacing,

@@ -121,6 +121,10 @@ local function CheckIng(data, auto_cook_source, notcont)
     end
 end
 
+-- 灵界炼丹炉：1~4 为原料格，第 5 格是异火燃料格。
+-- 自动做饭只负责填原料，燃料与开炉交给玩家，故这里只需跳过燃料格。
+local LJ_INGREDIENT_SLOTS = 4
+
 -- 同步锅内食材：移出多余食材、补齐缺失食材（支持堆叠设备按数量搬运）
 -- required 支持 prefab 数组或 {prefab = count} 数量表
 local function SyncPotContents(container, cont, required, auto_cook_source, cooker_prefab)
@@ -148,8 +152,11 @@ local function SyncPotContents(container, cont, required, auto_cook_source, cook
         and ok_slots and num_slots == 4
         and ok_type and cont_type == "cooker"
 
+    local is_lj_furnace = cooker_prefab == "lj_alchemy_furnace"
+
     for slot, item in pairs(items) do
-        if item and item.prefab then
+        -- 灵界炼丹炉的燃料格不参与配方整理（燃料由玩家自己放）
+        if item and item.prefab and not (is_lj_furnace and slot > LJ_INGREDIENT_SLOTS) then
             local stack_size = GetStackSize(item)
             local n = need[item.prefab] or 0
             if n > 0 then
@@ -177,12 +184,15 @@ local function SyncPotContents(container, cont, required, auto_cook_source, cook
     for _, count in pairs(need) do
         remaining = remaining + count
     end
-    if remaining == 0 then return true end
+    if remaining == 0 then
+        return true
+    end
 
     local found = CheckIng(need, auto_cook_source, cont)
     if not found then return false end
 
-    if accepts_stacks and not is_stackable_four_slot_cooker then
+    -- 堆叠设备（含灵界炼丹炉）按精确数量搬运，避免整叠移入导致多放
+    if (accepts_stacks and not is_stackable_four_slot_cooker) or is_lj_furnace then
         for _, slot in ipairs(found) do
             MoveItemFromCountOfSlot(slot.slot, slot.cont, cont, slot.count)
             Sleep(0)
@@ -196,6 +206,7 @@ local function SyncPotContents(container, cont, required, auto_cook_source, cook
             end
         end
     end
+
     return true
 end
 

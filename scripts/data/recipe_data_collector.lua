@@ -1,4 +1,4 @@
--- 料理数据收集：原版食谱 + HOF 酿酒 + 神话炼丹 + 登仙炼丹
+-- 料理数据收集：原版食谱 + HOF 酿酒 + 神话炼丹 + 登仙炼丹 + 灵界炼丹炉
 -- 所有收集函数操作同一个 db 实例，写入 db.categories / db.all
 local cooking = require("cooking")
 local Analyzer = require("data/recipe_requirement_analyzer")
@@ -130,6 +130,39 @@ local function _InsertItem(db, category, item, with_mod)
         table.insert(db.categories["mod"], item)
     end
     table.insert(db.all, item)
+end
+
+-- 收集辅助：炼丹配方 -> 匹配需求（minnames + 替代材料组）
+-- 替代材料组：同组内任选一种，数量取组内任意一项的 count（配方里同组数量一致）
+local function _BuildRecipeMatchDef(data)
+    local minnames = {}
+    for ingredient, count in pairs(data.recipe) do
+        minnames[ingredient] = count
+    end
+
+    local analog_groups = nil
+    if data.alternative_recipe ~= nil then
+        analog_groups = {}
+        for _, alt_group in ipairs(data.alternative_recipe) do
+            local group = { names = {}, amount = 1 }
+            local first_count = nil
+            for ing_name, ing_count in pairs(alt_group) do
+                table.insert(group.names, ing_name)
+                if first_count == nil then
+                    first_count = ing_count
+                end
+            end
+            group.amount = first_count or 1
+            if #group.names > 0 then
+                table.insert(analog_groups, group)
+            end
+        end
+        if #analog_groups == 0 then
+            analog_groups = nil
+        end
+    end
+
+    return minnames, analog_groups
 end
 
 -- 收集辅助：分析 test 并建索引（无 test 则仅建索引）
@@ -431,33 +464,7 @@ function Collector.CollectXd(db)
             if not seen[prefab] and data.recipe then
                 seen[prefab] = true
 
-                local minnames = {}
-                for ingredient, count in pairs(data.recipe) do
-                    minnames[ingredient] = count
-                end
-
-                -- 替代配方：同组内任意一个食材即可，数量取组内任意 count
-                local analog_groups = nil
-                if data.alternative_recipe then
-                    analog_groups = {}
-                    for _, alt_group in pairs(data.alternative_recipe) do
-                        local group = { names = {}, amount = 1 }
-                        local first_count = nil
-                        for ing_name, ing_count in pairs(alt_group) do
-                            table.insert(group.names, ing_name)
-                            if first_count == nil then
-                                first_count = ing_count
-                            end
-                        end
-                        group.amount = first_count or 1
-                        if #group.names > 0 then
-                            table.insert(analog_groups, group)
-                        end
-                    end
-                    if #analog_groups == 0 then
-                        analog_groups = nil
-                    end
-                end
+                local minnames, analog_groups = _BuildRecipeMatchDef(data)
 
                 local reqs = {
                     minnames = minnames,
@@ -477,6 +484,139 @@ function Collector.CollectXd(db)
                 Analyzer.BuildRequirementsIndex(item)
                 _InsertItem(db, device, item)
             end
+        end
+    end
+    return true
+end
+
+-- 灵界炼丹炉设备名（容器 prefab 即分类键）
+local LJ_DEVICE = "lj_alchemy_furnace"
+
+-- 灵界可作第 5 格燃料的异火。
+-- 全部由 alchemy/lj_flame 生成：lj_<单段名>_flame 为本体、lj_<单段名>_flame_split 为分裂火，
+-- 两者都带 lj_flame 标签。直接扫描客户端已注册的 Prefabs 自动跟随增删，无需维护名单。
+local LJ_FUEL_PATTERN = "^lj_%a+_flame$"
+local LJ_FUEL_SPLIT_PATTERN = "^lj_%a+_flame_split$"
+
+local _lj_fuel_list
+
+local function GetLjFuelPrefabs()
+    if _lj_fuel_list == nil then
+        local list = {}
+        local prefabs = _G.Prefabs
+        if prefabs ~= nil then
+            for name in pairs(prefabs) do
+                if type(name) == "string"
+                    and (name:match(LJ_FUEL_PATTERN) or name:match(LJ_FUEL_SPLIT_PATTERN)) then
+                    table.insert(list, name)
+                end
+            end
+        end
+        if #list == 0 then
+            -- prefab 尚未注册完，不缓存空结果，下次再试
+            return list
+        end
+        table.sort(list)
+        _lj_fuel_list = list
+    end
+    return _lj_fuel_list
+end
+
+-- 灵界炼丹数据：配方以数组形式集中在 main/config/lj_alchemy_defs，
+-- 由灵界自身在客户端/服务端都加载（all_clients_require_mod），此处懒取避免加载顺序问题。
+function Collector.GetLjAlchemyDefs()
+    local loaded = _G.package and _G.package.loaded
+    local defs = loaded and loaded["main/config/lj_alchemy_defs"]
+    if defs ~= nil and defs.recipes ~= nil then
+        return defs
+    end
+    return nil
+end
+
+-- 灵界配方数组 -> 设备配方映射（prefab -> recipe_def），面板与匹配层按 prefab 取用。
+-- 字段对齐智能锅通用结构：ingredients -> recipe、oneof -> alternative_recipe。
+function Collector.BuildLjRecipeMap(defs)
+    local map = {}
+    if defs == nil or defs.recipes == nil then
+        return map
+    end
+    for _, recipe in ipairs(defs.recipes) do
+        if recipe.product ~= nil and recipe.ingredients ~= nil and recipe.enabled ~= false then
+            map[recipe.product] = {
+                recipe = recipe.ingredients,
+                alternative_recipe = recipe.oneof,
+                lj_recipe = recipe,
+            }
+        end
+    end
+    return map
+end
+
+-- 灵界炼丹炉食谱；幂等，数据未就绪时返回 false 以便调用方重试
+function Collector.CollectLj(db)
+    local defs = Collector.GetLjAlchemyDefs()
+    if defs == nil then
+        return false
+    end
+
+    -- 异火 prefab 尚未注册完时先不建条目，避免把空燃料列表固化进配方（下次再收集）
+    local fuel_prefabs = GetLjFuelPrefabs()
+    if #fuel_prefabs == 0 then
+        return false
+    end
+
+    local recipe_map = Collector.BuildLjRecipeMap(defs)
+    db._lj_recipes = recipe_map
+    _EnsureCategory(db, LJ_DEVICE)
+    local existing = _BuildExisting(db)
+
+    for prefab, data in pairs(recipe_map) do
+        if not existing[prefab] then
+            existing[prefab] = true
+
+            local minnames, analog_groups = _BuildRecipeMatchDef(data)
+
+            local reqs = {
+                minnames = minnames,
+                mintags = {},
+                maxtags = {},
+                -- 灵界 CountsMatch 语义：锅里出现配方未声明的材料类型即不成丹
+                exact_ingredients = true,
+                -- 开炉前提：第 5 格必须放入异火。仅作需求展示，不并入原料数量判定
+                -- （异火可能放在地面/未打开的容器里，纳入可做判定误判率高）
+                fuel = {
+                    count = 1,
+                    -- 可作燃料的异火列表：UI 按替代组渲染，成员数达阈值自动聚合为一格
+                    prefabs = fuel_prefabs,
+                    prefab = "lj_alchemy_flame",  -- 单图标回退（列表异常时使用）
+                    celestial = data.lj_recipe and data.lj_recipe.celestial == true,
+                },
+            }
+            if analog_groups then
+                reqs.analog_groups = analog_groups
+            end
+
+            -- 炼制时长：灵界用绝对秒数（recipe.time 或所属 tier 的 time），
+            -- 智能锅弹窗按 cooktime 倍数显示（秒数 = BASE_COOK_TIME * cooktime）
+            local lj_recipe = data.lj_recipe
+            local tier_data = lj_recipe ~= nil and lj_recipe.tier ~= nil
+                and defs.tiers ~= nil and defs.tiers[lj_recipe.tier] or nil
+            local craft_time = (lj_recipe ~= nil and lj_recipe.time)
+                or (tier_data ~= nil and tier_data.time)
+            local base_cook_time = _G.TUNING and _G.TUNING.BASE_COOK_TIME
+            local cooktime = nil
+            if craft_time ~= nil and base_cook_time ~= nil and base_cook_time > 0 then
+                cooktime = craft_time / base_cook_time
+            end
+
+            local item = _BuildRecipeItem(prefab, { cooktime = cooktime }, LJ_DEVICE, {
+                recipe_requirements = reqs,
+                has_buff = true,
+                is_vanilla = false,
+            })
+            item.device = LJ_DEVICE
+            Analyzer.BuildRequirementsIndex(item)
+            _InsertItem(db, LJ_DEVICE, item)
         end
     end
     return true
@@ -502,6 +642,7 @@ function Collector.CollectAll(db)
     db._brewer_max_tag_values = nil
     db._brewer_ingredients = nil
     db._myth_collected = nil
+    db._lj_recipes = nil
 
     if not CollectVanilla(db) then
         return db
@@ -512,6 +653,7 @@ function Collector.CollectAll(db)
     Collector.CollectBrewer(db)
     Collector.EnsureMyth(db)
     Collector.CollectXd(db)
+    Collector.CollectLj(db)
 
     -- 为环境料理打标（is_environment_locked / env_dim）
     -- 供"单料理级"缓存（craftable_combo_generator）按维度取指纹用；
